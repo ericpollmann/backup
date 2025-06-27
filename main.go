@@ -1746,8 +1746,8 @@ func (m *Manager) check() error {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
-		// Get file list with checksums from rclone (specifically from parity/)
-		remotePath := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
+		// Get file list with checksums from rclone (specifically from .restic/parity/)
+		remotePath := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
 		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
 		if err != nil {
@@ -1783,11 +1783,11 @@ func (m *Manager) check() error {
 
 			if remoteMD5, exists := remoteMap[remotePath]; exists {
 				if remoteMD5 != file.MD5 {
-					fmt.Printf("  ✗ Cloud MD5 mismatch: parity/%s\n", remotePath)
+					fmt.Printf("  ✗ Cloud MD5 mismatch: .restic/parity/%s\n", remotePath)
 					cloudErrors++
 				}
 			} else {
-				fmt.Printf("  ✗ Missing in cloud: parity/%s\n", remotePath)
+				fmt.Printf("  ✗ Missing in cloud: .restic/parity/%s\n", remotePath)
 				cloudErrors++
 			}
 		}

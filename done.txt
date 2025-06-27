@@ -882,3 +882,7 @@ because those files all do exist in
   gdrive:backup but they don't exist at the top level which I feel likely 
 is the place being checked.
 
+> Please verify your cloud verification path checking logic by running it 
+now, you can also examine gdrive contents of 
+  the folder `backup` specifically
+
