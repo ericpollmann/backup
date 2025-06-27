@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -123,6 +124,7 @@ type Manager struct {
 	outerManifest *OuterManifest
 	scheme        *ErasureScheme
 	progress      *ProgressTracker
+	parityPaths   []string // Paths to parity files for manifest embedding
 }
 
 func NewManager(config *Config) *Manager {
@@ -855,6 +857,14 @@ func (m *Manager) GenerateErasureCodesChunked() error {
 	}
 
 	m.progress.CompleteTask(fmt.Sprintf("Processed %d chunks", totalChunks))
+
+	// Embed manifests in all parity shards for robustness
+	log.Println("Embedding recovery manifest in parity shards...")
+	if err := m.embedManifestsInParityShards(); err != nil {
+		log.Printf("Warning: failed to embed manifests in parity shards: %v", err)
+		// This is not fatal - we can still continue
+	}
+
 	return nil
 }
 
@@ -947,6 +957,7 @@ func (m *Manager) parityWriter(totalChunks int, chunkSize int64, results <-chan 
 	}
 
 	// Close all files and rename to SHA256-based names
+	finalPaths := make([]string, m.scheme.ParityShards)
 	for i := 0; i < m.scheme.ParityShards; i++ {
 		if err := parityFiles[i].Close(); err != nil {
 			done <- fmt.Errorf("failed to close parity file %d: %w", i, err)
@@ -967,7 +978,11 @@ func (m *Manager) parityWriter(totalChunks int, chunkSize int64, results <-chan 
 			done <- fmt.Errorf("failed to rename parity shard %d: %w", i, err)
 			return
 		}
+		finalPaths[i] = finalPath
 	}
+
+	// Store parity paths for manifest embedding
+	m.parityPaths = finalPaths
 
 	m.progress.CompleteTask(fmt.Sprintf("Created %d parity files", m.scheme.ParityShards))
 	done <- nil
@@ -2046,51 +2061,65 @@ func (m *Manager) fsck() error {
 func (m *Manager) Recover() error {
 	log.Println("Starting recovery process...")
 
-	// Try to load inner manifest
-	innerPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
-	innerData, err := os.ReadFile(innerPath)
+	// First try to recover manifest from parity shards (most robust)
+	manifest, err := m.tryRecoverManifestFromParity()
+	if err == nil {
+		// Successfully recovered from parity
+		m.innerManifest = manifest
 
-	if err != nil {
-		log.Println("Inner manifest missing, will recover it from parity...")
-		// Check if we have chunked parity files
-		parityDir := filepath.Join(m.config.ParityDir, "shards")
-		if files, err := os.ReadDir(parityDir); err == nil && len(files) > 0 {
-			// Check any parity file size to determine format
-			var isChunkedFormat bool
-			for _, file := range files {
-				if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
-					parityPath := filepath.Join(parityDir, file.Name())
-					if info, err := os.Stat(parityPath); err == nil {
-						isChunkedFormat = info.Size() == 65536
-						break
+		// Save it to the expected location for future use
+		innerPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
+		if data, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+			os.MkdirAll(m.config.MetadataDir, 0755)
+			os.WriteFile(innerPath, data, 0644)
+		}
+	} else {
+		// Fall back to reading from file system
+		innerPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
+		innerData, err := os.ReadFile(innerPath)
+
+		if err != nil {
+			log.Println("Inner manifest missing from both parity and filesystem, will attempt recovery...")
+			// Check if we have chunked parity files
+			parityDir := filepath.Join(m.config.ParityDir, "shards")
+			if files, err := os.ReadDir(parityDir); err == nil && len(files) > 0 {
+				// Check any parity file size to determine format
+				var isChunkedFormat bool
+				for _, file := range files {
+					if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+						parityPath := filepath.Join(parityDir, file.Name())
+						if info, err := os.Stat(parityPath); err == nil {
+							isChunkedFormat = info.Size() > 65536 // With embedded manifest, will be larger
+							break
+						}
 					}
 				}
-			}
 
-			if isChunkedFormat {
-				// Chunked format
-				if err := m.recoverFromParityChunked(); err != nil {
-					return fmt.Errorf("failed to recover from chunked parity: %w", err)
+				if isChunkedFormat {
+					// Chunked format
+					if err := m.recoverFromParityChunked(); err != nil {
+						return fmt.Errorf("failed to recover from chunked parity: %w", err)
+					}
+				} else {
+					// Old format
+					if err := m.recoverFromParity(); err != nil {
+						return fmt.Errorf("failed to recover from parity: %w", err)
+					}
 				}
 			} else {
-				// Old format
-				if err := m.recoverFromParity(); err != nil {
-					return fmt.Errorf("failed to recover from parity: %w", err)
-				}
+				return fmt.Errorf("no parity files found for recovery")
 			}
-		} else {
-			return fmt.Errorf("no parity files found for recovery")
+
+			// Reload inner manifest
+			innerData, err = os.ReadFile(innerPath)
+			if err != nil {
+				return fmt.Errorf("failed to read recovered inner manifest: %w", err)
+			}
 		}
 
-		// Reload inner manifest
-		innerData, err = os.ReadFile(innerPath)
-		if err != nil {
-			return fmt.Errorf("failed to read recovered inner manifest: %w", err)
+		if err := json.Unmarshal(innerData, &m.innerManifest); err != nil {
+			return fmt.Errorf("failed to parse inner manifest: %w", err)
 		}
-	}
-
-	if err := json.Unmarshal(innerData, &m.innerManifest); err != nil {
-		return fmt.Errorf("failed to parse inner manifest: %w", err)
 	}
 
 	// Extract erasure scheme from inner manifest
@@ -2112,16 +2141,20 @@ func (m *Manager) recoverFromParityChunked() error {
 
 	log.Println("Recovering from chunked parity shards...")
 
-	// Load outer manifest to know the structure
+	// Try to load outer manifest
+	var outerManifest *OuterManifest
 	outerPath := filepath.Join(m.config.ParityDir, OuterManifestName)
-	outerData, err := os.ReadFile(outerPath)
-	if err != nil {
-		return fmt.Errorf("outer manifest required for recovery: %w", err)
+	if outerData, err := os.ReadFile(outerPath); err == nil {
+		outerManifest = &OuterManifest{}
+		if err := json.Unmarshal(outerData, outerManifest); err != nil {
+			log.Printf("Warning: failed to parse outer manifest: %v", err)
+			outerManifest = nil
+		}
 	}
 
-	var outerManifest OuterManifest
-	if err := json.Unmarshal(outerData, &outerManifest); err != nil {
-		return fmt.Errorf("failed to parse outer manifest: %w", err)
+	// If no outer manifest, we need inner manifest from recovery
+	if outerManifest == nil && m.innerManifest == nil {
+		return fmt.Errorf("need either outer manifest or recovered inner manifest for recovery")
 	}
 
 	// Try to load inner manifest for erasure scheme
@@ -2142,14 +2175,19 @@ func (m *Manager) recoverFromParityChunked() error {
 			if err := json.Unmarshal(schemeData, tempScheme); err != nil {
 				return fmt.Errorf("failed to parse erasure scheme: %w", err)
 			}
-		} else {
-			// Infer from manifest - data files + 1 metadata zip
+		} else if m.innerManifest != nil && m.innerManifest.ErasureScheme != nil {
+			// Use scheme from recovered inner manifest
+			tempScheme = m.innerManifest.ErasureScheme
+		} else if outerManifest != nil {
+			// Infer from outer manifest - data files + 1 metadata zip
 			dataCount := len(outerManifest.DataFiles) + 1
 			parityCount := len(outerManifest.ParityFiles)
 			tempScheme = &ErasureScheme{
 				DataShards:   dataCount,
 				ParityShards: parityCount,
 			}
+		} else {
+			return fmt.Errorf("cannot determine erasure scheme")
 		}
 	}
 
@@ -2161,18 +2199,42 @@ func (m *Manager) recoverFromParityChunked() error {
 
 	// Build ordered list of all files (data files + metadata zip)
 	allFiles := []FileEntry{}
-
-	// Add all data files first
-	allFiles = append(allFiles, outerManifest.DataFiles...)
-
-	// Find and add the metadata zip (should be in MetadataFiles)
 	var metadataZipEntry *FileEntry
-	for _, f := range outerManifest.MetadataFiles {
-		if strings.HasPrefix(f.Path, "metadata/") && !strings.Contains(f.Path, "inner_manifest") && !strings.Contains(f.Path, "erasure_scheme") {
-			// This should be the metadata zip (named by SHA256)
-			metadataZipEntry = &f
-			allFiles = append(allFiles, f)
-			break
+
+	if outerManifest != nil {
+		// Add all data files first
+		allFiles = append(allFiles, outerManifest.DataFiles...)
+
+		// Find and add the metadata zip (should be in MetadataFiles)
+		for _, f := range outerManifest.MetadataFiles {
+			if strings.HasPrefix(f.Path, "metadata/") && !strings.Contains(f.Path, "inner_manifest") && !strings.Contains(f.Path, "erasure_scheme") {
+				// This should be the metadata zip (named by SHA256)
+				metadataZipEntry = &f
+				allFiles = append(allFiles, f)
+				break
+			}
+		}
+	} else if m.innerManifest != nil {
+		// Use inner manifest files
+		allFiles = append(allFiles, m.innerManifest.Files...)
+
+		// Add metadata zip as last entry (it's always at position DataShards-1)
+		// Look for it in metadata directory
+		metadataDir := m.config.MetadataDir
+		if files, err := os.ReadDir(metadataDir); err == nil {
+			for _, file := range files {
+				if !file.IsDir() && file.Name() != InnerManifestName && file.Name() != ErasureSchemeName {
+					// This should be the metadata zip
+					info, _ := file.Info()
+					metadataZipEntry = &FileEntry{
+						Path: "metadata/" + file.Name(),
+						Size: info.Size(),
+						Type: "metadata",
+					}
+					allFiles = append(allFiles, *metadataZipEntry)
+					break
+				}
+			}
 		}
 	}
 
@@ -2711,9 +2773,13 @@ func (m *Manager) recoverAllMissingFiles() error {
 		for _, file := range files {
 			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
 				parityPath := filepath.Join(parityDir, file.Name())
-				if info, err := os.Stat(parityPath); err == nil && info.Size() == 65536 {
-					// Chunked format
-					return m.recoverFromParityChunked()
+				if info, err := os.Stat(parityPath); err == nil {
+					// Chunked format has 64KB chunks + potential manifest footer
+					// Old format would have variable sizes based on file count
+					if info.Size() >= 65536 && info.Size() < 100000 {
+						// Likely chunked format (64KB plus some manifest data)
+						return m.recoverFromParityChunked()
+					}
 				}
 			}
 		}
@@ -2919,6 +2985,157 @@ func (p *ProgressTracker) Error(format string, args ...interface{}) {
 	}
 
 	log.Printf(format, args...)
+}
+
+// embedManifestsInParityShards adds manifest data to all parity shards as a footer
+func (m *Manager) embedManifestsInParityShards() error {
+	if len(m.parityPaths) == 0 {
+		return fmt.Errorf("no parity paths available")
+	}
+
+	// Serialize inner manifest
+	manifestData, err := json.MarshalIndent(m.innerManifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize inner manifest: %w", err)
+	}
+
+	// Create footer structure
+	type ParityFooter struct {
+		Magic        [8]byte  // "RSPARITY"
+		Version      uint32   // Format version
+		ManifestSize uint32   // Size of manifest JSON
+		Reserved     [48]byte // Reserved for future use
+	}
+
+	footer := ParityFooter{
+		Magic:        [8]byte{'R', 'S', 'P', 'A', 'R', 'I', 'T', 'Y'},
+		Version:      1,
+		ManifestSize: uint32(len(manifestData)),
+	}
+
+	// Embed in each parity shard
+	for i, path := range m.parityPaths {
+		if err := m.appendManifestToShard(path, manifestData, footer); err != nil {
+			log.Printf("Warning: failed to embed manifest in shard %d: %v", i, err)
+			// Continue with other shards
+		}
+	}
+
+	return nil
+}
+
+// appendManifestToShard appends manifest and footer to a parity shard
+func (m *Manager) appendManifestToShard(path string, manifestData []byte, footer interface{}) error {
+	// Open file for appending
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open parity shard for appending: %w", err)
+	}
+	defer file.Close()
+
+	// Write manifest data
+	if _, err := file.Write(manifestData); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+
+	// Write footer (fixed 64 bytes)
+	if err := binary.Write(file, binary.LittleEndian, footer); err != nil {
+		return fmt.Errorf("failed to write footer: %w", err)
+	}
+
+	return nil
+}
+
+// tryRecoverManifestFromParity attempts to read manifest from any parity shard
+func (m *Manager) tryRecoverManifestFromParity() (*InnerManifest, error) {
+	parityDir := filepath.Join(m.config.ParityDir, "shards")
+	files, err := os.ReadDir(parityDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read parity directory: %w", err)
+	}
+
+	// Try each parity shard
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".shard") {
+			continue
+		}
+
+		manifest, err := m.readManifestFromParity(filepath.Join(parityDir, file.Name()))
+		if err != nil {
+			log.Printf("Warning: failed to read manifest from %s: %v", file.Name(), err)
+			continue
+		}
+
+		// Successfully read manifest
+		log.Printf("Successfully recovered manifest from parity shard: %s", file.Name())
+		return manifest, nil
+	}
+
+	return nil, fmt.Errorf("failed to recover manifest from any parity shard")
+}
+
+// readManifestFromParity reads the embedded manifest from a parity shard
+func (m *Manager) readManifestFromParity(path string) (*InnerManifest, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Read footer from end of file (64 bytes)
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Size() < 64 {
+		return nil, fmt.Errorf("parity shard too small to contain footer")
+	}
+
+	// Seek to footer position
+	if _, err := file.Seek(-64, io.SeekEnd); err != nil {
+		return nil, err
+	}
+
+	// Read footer
+	var footer struct {
+		Magic        [8]byte
+		Version      uint32
+		ManifestSize uint32
+		Reserved     [48]byte
+	}
+
+	if err := binary.Read(file, binary.LittleEndian, &footer); err != nil {
+		return nil, fmt.Errorf("failed to read footer: %w", err)
+	}
+
+	// Check magic
+	if string(footer.Magic[:]) != "RSPARITY" {
+		return nil, fmt.Errorf("invalid magic in footer")
+	}
+
+	// Read manifest
+	manifestOffset := info.Size() - 64 - int64(footer.ManifestSize)
+	if manifestOffset < 0 {
+		return nil, fmt.Errorf("invalid manifest size in footer")
+	}
+
+	if _, err := file.Seek(manifestOffset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	manifestData := make([]byte, footer.ManifestSize)
+	if _, err := io.ReadFull(file, manifestData); err != nil {
+		return nil, fmt.Errorf("failed to read manifest data: %w", err)
+	}
+
+	// Parse manifest
+	var manifest InnerManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
 }
 
 // Helper functions
