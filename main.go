@@ -1746,8 +1746,8 @@ func (m *Manager) check() error {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
-		// Get file list with checksums from rclone (specifically from .restic/parity/)
-		remotePath := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+		// Get file list with checksums from rclone (specifically from parity/)
+		remotePath := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
 		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
 		if err != nil {
@@ -1778,16 +1778,16 @@ func (m *Manager) check() error {
 		checkFiles = append(checkFiles, manifest.ParityFiles...)
 
 		for _, file := range checkFiles {
-			// The remote files are listed from within .restic/parity/, so we use the local path directly
+			// The remote files are listed from within parity/, so we use the local path directly
 			remotePath := file.Path
 
 			if remoteMD5, exists := remoteMap[remotePath]; exists {
 				if remoteMD5 != file.MD5 {
-					fmt.Printf("  ✗ Cloud MD5 mismatch: %s\n", remotePath)
+					fmt.Printf("  ✗ Cloud MD5 mismatch: parity/%s\n", remotePath)
 					cloudErrors++
 				}
 			} else {
-				fmt.Printf("  ✗ Missing in cloud: %s\n", remotePath)
+				fmt.Printf("  ✗ Missing in cloud: parity/%s\n", remotePath)
 				cloudErrors++
 			}
 		}
@@ -3213,7 +3213,7 @@ func (m *Manager) saveState() error {
 }
 
 func (m *Manager) syncToRemote() error {
-	fmt.Println("Syncing parity files to remote...")
+	fmt.Println("Syncing entire repository to remote...")
 
 	// Get the best rclone path
 	rclonePath := getRclonePath()
@@ -3225,16 +3225,16 @@ func (m *Manager) syncToRemote() error {
 		log.Printf("Using rclone: %s", strings.Split(string(output), "\n")[0])
 	}
 
-	// Sync entire parity directory
-	src := m.config.ParityDir
-	dst := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+	// Sync entire repository (including parity)
+	src := m.config.RepoPath
+	dst := m.config.RcloneRemote
 
 	cmd := exec.Command(rclonePath, "sync", src, dst, "--progress")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to sync parity files: %w", err)
+		return fmt.Errorf("failed to sync repository: %w", err)
 	}
 
 	fmt.Println("Sync completed successfully")
