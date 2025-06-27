@@ -902,17 +902,18 @@ func (m *Manager) parityWriter(totalChunks int, chunkSize int64, results <-chan 
 		return
 	}
 
-	// Open all parity files
+	// Create temporary parity files
 	parityFiles := make([]*os.File, m.scheme.ParityShards)
+	tempPaths := make([]string, m.scheme.ParityShards)
 	for i := 0; i < m.scheme.ParityShards; i++ {
-		path := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
-		f, err := os.Create(path)
+		tempPath := filepath.Join(parityDir, fmt.Sprintf(".parity_%04d.shard.tmp", i))
+		f, err := os.Create(tempPath)
 		if err != nil {
 			done <- fmt.Errorf("failed to create parity file %d: %w", i, err)
 			return
 		}
-		defer f.Close()
 		parityFiles[i] = f
+		tempPaths[i] = tempPath
 	}
 
 	// Buffer for out-of-order results
@@ -942,6 +943,29 @@ func (m *Manager) parityWriter(totalChunks int, chunkSize int64, results <-chan 
 			} else {
 				break
 			}
+		}
+	}
+
+	// Close all files and rename to SHA256-based names
+	for i := 0; i < m.scheme.ParityShards; i++ {
+		if err := parityFiles[i].Close(); err != nil {
+			done <- fmt.Errorf("failed to close parity file %d: %w", i, err)
+			return
+		}
+
+		// Calculate SHA256 of the file
+		sha256sum, err := calculateSHA256(tempPaths[i])
+		if err != nil {
+			done <- fmt.Errorf("failed to calculate SHA256 for parity shard %d: %w", i, err)
+			return
+		}
+
+		// Rename to SHA256-based name with index prefix for ordering
+		finalName := fmt.Sprintf("%04d_%s.shard", i, sha256sum)
+		finalPath := filepath.Join(parityDir, finalName)
+		if err := os.Rename(tempPaths[i], finalPath); err != nil {
+			done <- fmt.Errorf("failed to rename parity shard %d: %w", i, err)
+			return
 		}
 	}
 
@@ -1089,11 +1113,16 @@ func (m *Manager) GenerateErasureCodesOld() error {
 	m.progress.StartTask("Writing parity shards", m.scheme.ParityShards)
 
 	for i := 0; i < m.scheme.ParityShards; i++ {
-		m.progress.UpdateProgress(i+1, fmt.Sprintf("parity_%04d.shard", i))
-
-		parityPath := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
 		parityData := dataShards[m.scheme.DataShards+i]
 
+		// Calculate SHA256 of parity data
+		h := sha256.New()
+		h.Write(parityData)
+		sha256sum := hex.EncodeToString(h.Sum(nil))
+
+		m.progress.UpdateProgress(i+1, sha256sum)
+
+		parityPath := filepath.Join(parityDir, sha256sum)
 		if err := os.WriteFile(parityPath, parityData, 0644); err != nil {
 			return fmt.Errorf("failed to write parity shard %d: %w", i, err)
 		}
@@ -1178,18 +1207,42 @@ func (m *Manager) CreateOuterManifest() error {
 
 	// Add parity files
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	for i := 0; i < m.scheme.ParityShards; i++ {
-		parityPath := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
+	parityFiles, err := os.ReadDir(parityDir)
+	if err != nil {
+		return fmt.Errorf("failed to read parity directory: %w", err)
+	}
 
-		md5sum, sha256sum, err := calculateChecksums(parityPath)
+	// Sort files by name to ensure consistent order
+	sort.Slice(parityFiles, func(i, j int) bool {
+		return parityFiles[i].Name() < parityFiles[j].Name()
+	})
+
+	for _, file := range parityFiles {
+		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
+			continue // Skip directories and temp files
+		}
+
+		filePath := filepath.Join(parityDir, file.Name())
+		info, err := file.Info()
 		if err != nil {
-			log.Printf("Warning: couldn't calculate checksums for parity shard %d: %v", i, err)
+			log.Printf("Warning: couldn't stat parity file %s: %v", file.Name(), err)
 			continue
 		}
 
-		info, _ := os.Stat(parityPath)
+		md5sum, err := calculateMD5(filePath)
+		if err != nil {
+			log.Printf("Warning: couldn't calculate MD5 for parity file %s: %v", file.Name(), err)
+			continue
+		}
+
+		// For parity files, extract SHA256 from filename (format: 0000_SHA256.shard)
+		sha256sum := ""
+		if parts := strings.Split(file.Name(), "_"); len(parts) == 2 {
+			sha256sum = strings.TrimSuffix(parts[1], ".shard")
+		}
+
 		entry := FileEntry{
-			Path:   fmt.Sprintf("shards/parity_%04d.shard", i),
+			Path:   filepath.Join("shards", file.Name()),
 			Size:   info.Size(),
 			MD5:    md5sum,
 			SHA256: sha256sum,
@@ -1531,28 +1584,41 @@ func (m *Manager) CreateOuterManifestIncremental() error {
 	// Add parity files
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
 	if files, err := os.ReadDir(parityDir); err == nil {
+		// Sort files by name to ensure consistent order
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].Name() < files[j].Name()
+		})
+
 		for _, file := range files {
-			if !file.IsDir() && strings.HasPrefix(file.Name(), "parity_") {
-				info, err := file.Info()
-				if err != nil {
-					continue
-				}
-
-				filePath := filepath.Join(parityDir, file.Name())
-				md5sum, err := calculateMD5(filePath)
-				if err != nil {
-					continue
-				}
-
-				m.outerManifest.ParityFiles = append(m.outerManifest.ParityFiles, FileEntry{
-					Path:   filepath.Join("shards", file.Name()),
-					Size:   info.Size(),
-					MD5:    md5sum,
-					SHA256: "", // Skip SHA256 for parity files (large)
-					Type:   "parity",
-				})
-				m.outerManifest.TotalSize += info.Size()
+			if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
+				continue // Skip directories and temp files
 			}
+
+			info, err := file.Info()
+			if err != nil {
+				continue
+			}
+
+			filePath := filepath.Join(parityDir, file.Name())
+			md5sum, err := calculateMD5(filePath)
+			if err != nil {
+				continue
+			}
+
+			// For parity files, extract SHA256 from filename (format: 0000_SHA256.shard)
+			sha256sum := ""
+			if parts := strings.Split(file.Name(), "_"); len(parts) == 2 {
+				sha256sum = strings.TrimSuffix(parts[1], ".shard")
+			}
+
+			m.outerManifest.ParityFiles = append(m.outerManifest.ParityFiles, FileEntry{
+				Path:   filepath.Join("shards", file.Name()),
+				Size:   info.Size(),
+				MD5:    md5sum,
+				SHA256: sha256sum,
+				Type:   "parity",
+			})
+			m.outerManifest.TotalSize += info.Size()
 		}
 	}
 
@@ -1989,9 +2055,19 @@ func (m *Manager) Recover() error {
 		// Check if we have chunked parity files
 		parityDir := filepath.Join(m.config.ParityDir, "shards")
 		if files, err := os.ReadDir(parityDir); err == nil && len(files) > 0 {
-			// Check first parity file size to determine format
-			firstParity := filepath.Join(parityDir, "parity_0000.shard")
-			if info, err := os.Stat(firstParity); err == nil && info.Size() == 65536 {
+			// Check any parity file size to determine format
+			var isChunkedFormat bool
+			for _, file := range files {
+				if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+					parityPath := filepath.Join(parityDir, file.Name())
+					if info, err := os.Stat(parityPath); err == nil {
+						isChunkedFormat = info.Size() == 65536
+						break
+					}
+				}
+			}
+
+			if isChunkedFormat {
 				// Chunked format
 				if err := m.recoverFromParityChunked(); err != nil {
 					return fmt.Errorf("failed to recover from chunked parity: %w", err)
@@ -2138,15 +2214,56 @@ func (m *Manager) recoverFromParityChunked() error {
 	// Open parity files
 	parityFiles := make([]*os.File, tempScheme.ParityShards)
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	for i := 0; i < tempScheme.ParityShards; i++ {
-		path := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
-		f, err := os.Open(path)
-		if err != nil {
-			log.Printf("Warning: cannot open parity file %d: %v", i, err)
-			continue
+
+	// If we have the outer manifest, use it; otherwise read from directory
+	if m.outerManifest != nil && len(m.outerManifest.ParityFiles) > 0 {
+		// Get parity files from manifest
+		if len(m.outerManifest.ParityFiles) != tempScheme.ParityShards {
+			return fmt.Errorf("parity file count mismatch: manifest has %d, scheme expects %d",
+				len(m.outerManifest.ParityFiles), tempScheme.ParityShards)
 		}
-		defer f.Close()
-		parityFiles[i] = f
+
+		for i, parityEntry := range m.outerManifest.ParityFiles {
+			// Extract filename from path (shards/SHA256)
+			filename := filepath.Base(parityEntry.Path)
+			path := filepath.Join(parityDir, filename)
+			f, err := os.Open(path)
+			if err != nil {
+				log.Printf("Warning: cannot open parity file %s: %v", filename, err)
+				continue
+			}
+			defer f.Close()
+			parityFiles[i] = f
+		}
+	} else {
+		// Read parity files from directory
+		files, err := os.ReadDir(parityDir)
+		if err != nil {
+			return fmt.Errorf("failed to read parity directory: %w", err)
+		}
+
+		// Sort files by name to ensure correct order (files are named 0000_SHA256.shard, 0001_SHA256.shard, etc.)
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].Name() < files[j].Name()
+		})
+
+		parityIndex := 0
+		for _, file := range files {
+			if parityIndex >= tempScheme.ParityShards {
+				break
+			}
+			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") && strings.HasSuffix(file.Name(), ".shard") {
+				path := filepath.Join(parityDir, file.Name())
+				f, err := os.Open(path)
+				if err != nil {
+					log.Printf("Warning: cannot open parity file %s: %v", file.Name(), err)
+					continue
+				}
+				defer f.Close()
+				parityFiles[parityIndex] = f
+				parityIndex++
+			}
+		}
 	}
 
 	// Determine total chunks needed (based on largest file)
@@ -2461,8 +2578,12 @@ func (m *Manager) recoverFromParity() error {
 
 	// Load parity shards
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	for i := 0; i < tempScheme.ParityShards; i++ {
-		parityPath := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
+	for i, parityEntry := range outerManifest.ParityFiles {
+		if i >= tempScheme.ParityShards {
+			break // Don't load more than expected
+		}
+		filename := filepath.Base(parityEntry.Path)
+		parityPath := filepath.Join(parityDir, filename)
 		if data, err := os.ReadFile(parityPath); err == nil {
 			shards[tempScheme.DataShards+i] = data
 		}
@@ -2586,11 +2707,15 @@ func (m *Manager) recoverAllMissingFiles() error {
 	// Check if we have chunked parity files
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
 	if files, err := os.ReadDir(parityDir); err == nil && len(files) > 0 {
-		// Check first parity file size to determine format
-		firstParity := filepath.Join(parityDir, "parity_0000.shard")
-		if info, err := os.Stat(firstParity); err == nil && info.Size() == 65536 {
-			// Chunked format
-			return m.recoverFromParityChunked()
+		// Check any parity file size to determine format
+		for _, file := range files {
+			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+				parityPath := filepath.Join(parityDir, file.Name())
+				if info, err := os.Stat(parityPath); err == nil && info.Size() == 65536 {
+					// Chunked format
+					return m.recoverFromParityChunked()
+				}
+			}
 		}
 	}
 
@@ -3229,7 +3354,11 @@ func (m *Manager) syncToRemote() error {
 	src := m.config.RepoPath
 	dst := m.config.RcloneRemote
 
-	cmd := exec.Command(rclonePath, "sync", src, dst, "--progress")
+	// Use sync with explicit flags for exact mirroring
+	cmd := exec.Command(rclonePath, "sync", src, dst,
+		"--progress",     // Show progress
+		"--delete-after", // Delete files after transferring new ones
+		"--verbose")      // Show what's being deleted
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -3276,6 +3405,12 @@ func (m *Manager) restoreToPath(restorePath string) error {
 
 	fmt.Printf("\nRestore complete! Repository available at: %s\n", resticRestorePath)
 	return nil
+}
+
+func calculateSHA256(filePath string) (string, error) {
+	// Reuse the dual checksum function
+	_, sha256sum, err := calculateChecksums(filePath)
+	return sha256sum, err
 }
 
 // init ensures required packages are available

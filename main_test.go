@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,9 +363,16 @@ func TestGenerateErasureCodes(t *testing.T) {
 	}
 
 	// Count parity files
-	parityFiles, err := filepath.Glob(filepath.Join(parityDir, "parity_*.shard"))
+	files, err := os.ReadDir(parityDir)
 	if err != nil {
-		t.Fatalf("Failed to glob parity files: %v", err)
+		t.Fatalf("Failed to read parity directory: %v", err)
+	}
+
+	parityFiles := []string{}
+	for _, file := range files {
+		if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+			parityFiles = append(parityFiles, filepath.Join(parityDir, file.Name()))
+		}
 	}
 
 	if len(parityFiles) != manager.scheme.ParityShards {
@@ -752,10 +758,19 @@ func TestMinimalRecovery(t *testing.T) {
 
 	// Delete some parity files to reach the limit
 	parityDir := filepath.Join(config.ParityDir, "shards")
-	for i := 0; i < parityCount-deletedCount && i < 2; i++ {
-		parityFile := filepath.Join(parityDir, fmt.Sprintf("parity_%04d.shard", i))
-		if err := os.Remove(parityFile); err != nil {
-			t.Fatalf("Failed to delete parity file: %v", err)
+	if parityFiles, err := os.ReadDir(parityDir); err == nil {
+		deletedParityCount := 0
+		for _, file := range parityFiles {
+			if deletedParityCount >= parityCount-deletedCount || deletedParityCount >= 2 {
+				break
+			}
+			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+				parityFile := filepath.Join(parityDir, file.Name())
+				if err := os.Remove(parityFile); err != nil {
+					t.Fatalf("Failed to delete parity file: %v", err)
+				}
+				deletedParityCount++
+			}
 		}
 	}
 
@@ -1064,9 +1079,17 @@ func TestCorruptedParityFile(t *testing.T) {
 	}
 
 	// Corrupt a parity file
-	parityFile := filepath.Join(config.ParityDir, "shards", "parity_0000.shard")
-	if err := os.WriteFile(parityFile, []byte("corrupted"), 0644); err != nil {
-		t.Fatalf("Failed to corrupt parity file: %v", err)
+	parityDir := filepath.Join(config.ParityDir, "shards")
+	if files, err := os.ReadDir(parityDir); err == nil {
+		for _, file := range files {
+			if !file.IsDir() && !strings.HasPrefix(file.Name(), ".") {
+				parityFile := filepath.Join(parityDir, file.Name())
+				if err := os.WriteFile(parityFile, []byte("corrupted"), 0644); err != nil {
+					t.Fatalf("Failed to corrupt parity file: %v", err)
+				}
+				break // Only corrupt one file
+			}
+		}
 	}
 
 	// Delete a data file
