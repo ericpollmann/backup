@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/reedsolomon"
@@ -120,6 +121,7 @@ func TestCalculateErasureScheme(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.10,
 	}
 
@@ -134,8 +136,8 @@ func TestCalculateErasureScheme(t *testing.T) {
 		t.Fatal("Erasure scheme is nil")
 	}
 
-	// We have 8 test files + inner manifest + erasure scheme = 10 data shards
-	expectedDataShards := 10
+	// We have 4 data files + 1 metadata zip = 5 data shards
+	expectedDataShards := 5
 	if manager.scheme.DataShards != expectedDataShards {
 		t.Errorf("DataShards: got %d, want %d", manager.scheme.DataShards, expectedDataShards)
 	}
@@ -145,8 +147,8 @@ func TestCalculateErasureScheme(t *testing.T) {
 		t.Errorf("ParityShards too low: got %d, expected at least 3", manager.scheme.ParityShards)
 	}
 
-	// With minimum 3 parity shards and 10 data shards, overhead should be at least 30%
-	expectedMinOverhead := float64(3) / float64(10) * 100 // 30%
+	// With minimum 3 parity shards and 5 data shards, overhead should be at least 60%
+	expectedMinOverhead := float64(3) / float64(5) * 100 // 60%
 	if manager.scheme.FileOverhead < expectedMinOverhead-1 {
 		t.Errorf("FileOverhead too low: got %.1f%%, expected at least %.1f%%", manager.scheme.FileOverhead, expectedMinOverhead)
 	}
@@ -158,6 +160,7 @@ func TestCreateInnerManifest(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.10,
 	}
 
@@ -168,9 +171,12 @@ func TestCreateInnerManifest(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	// Create parity directory
+	// Create directories
 	if err := os.MkdirAll(config.ParityDir, 0755); err != nil {
 		t.Fatalf("Failed to create parity dir: %v", err)
+	}
+	if err := os.MkdirAll(config.MetadataDir, 0755); err != nil {
+		t.Fatalf("Failed to create metadata dir: %v", err)
 	}
 
 	// Create inner manifest
@@ -179,7 +185,7 @@ func TestCreateInnerManifest(t *testing.T) {
 	}
 
 	// Verify manifest file exists
-	manifestPath := filepath.Join(config.ParityDir, InnerManifestName)
+	manifestPath := filepath.Join(config.MetadataDir, InnerManifestName)
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
 		t.Fatal("Inner manifest file not created")
 	}
@@ -200,25 +206,28 @@ func TestCreateInnerManifest(t *testing.T) {
 		t.Fatal("Inner manifest missing erasure scheme")
 	}
 
-	// Verify file count (8 repo files + erasure_scheme.json = 9)
-	expectedFiles := 9
+	// Verify file count - only data files
+	expectedFiles := 4 // Only files from data/ directory
 	if manifest.FileCount != expectedFiles {
 		t.Errorf("FileCount: got %d, want %d", manifest.FileCount, expectedFiles)
 	}
 
-	// Verify erasure_scheme.json is first file
-	if len(manifest.Files) == 0 || manifest.Files[0].Path != ErasureSchemeName {
-		if len(manifest.Files) > 0 {
-			t.Errorf("erasure_scheme.json should be first file in manifest, but got: %s", manifest.Files[0].Path)
-		} else {
-			t.Error("erasure_scheme.json should be first file in manifest, but no files found")
+	// Verify all files are from data directory
+	for _, file := range manifest.Files {
+		if !strings.HasPrefix(file.Path, "data/") {
+			t.Errorf("Expected all files to be from data/ directory, got: %s", file.Path)
 		}
 	}
 
 	// Verify all files have checksums
 	for _, file := range manifest.Files {
-		if file.MD5 == "" || file.SHA256 == "" {
-			t.Errorf("File %s missing checksums", file.Path)
+		if file.MD5 == "" {
+			t.Errorf("File %s missing MD5 checksum", file.Path)
+		}
+		// SHA256 is optional for restic data files
+		isResticData := strings.HasPrefix(file.Path, "data/")
+		if !isResticData && file.SHA256 == "" {
+			t.Errorf("File %s missing SHA256 checksum", file.Path)
 		}
 		if file.Size <= 0 {
 			t.Errorf("File %s has invalid size: %d", file.Path, file.Size)
@@ -233,6 +242,7 @@ func TestGenerateErasureCodes(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.20, // 20% for more parity shards in test
 	}
 
@@ -272,16 +282,17 @@ func TestGenerateErasureCodes(t *testing.T) {
 		t.Errorf("Parity files: got %d, want %d", len(parityFiles), manager.scheme.ParityShards)
 	}
 
-	// Verify parity files have correct size
+	// For chunked implementation, verify parity files exist
+	// Size will be based on chunks, not shard size
 	for _, parityFile := range parityFiles {
 		info, err := os.Stat(parityFile)
 		if err != nil {
 			t.Errorf("Failed to stat parity file %s: %v", parityFile, err)
 			continue
 		}
-		if info.Size() != manager.scheme.ShardSize {
-			t.Errorf("Parity file %s size: got %d, want %d",
-				filepath.Base(parityFile), info.Size(), manager.scheme.ShardSize)
+		// Chunked implementation creates files based on actual data size
+		if info.Size() == 0 {
+			t.Errorf("Parity file %s is empty", filepath.Base(parityFile))
 		}
 	}
 }
@@ -293,6 +304,7 @@ func TestCreateOuterManifest(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.15,
 	}
 
@@ -338,8 +350,9 @@ func TestCreateOuterManifest(t *testing.T) {
 	}
 
 	// Verify structure
-	if outer.InnerManifest.Path != InnerManifestName {
-		t.Errorf("InnerManifest path: got %s, want %s", outer.InnerManifest.Path, InnerManifestName)
+	expectedPath := "metadata/" + InnerManifestName
+	if outer.InnerManifest.Path != expectedPath {
+		t.Errorf("InnerManifest path: got %s, want %s", outer.InnerManifest.Path, expectedPath)
 	}
 
 	if len(outer.MetadataFiles) == 0 {
@@ -360,8 +373,14 @@ func TestCreateOuterManifest(t *testing.T) {
 	allFiles = append(allFiles, outer.InnerManifest)
 
 	for _, file := range allFiles {
-		if file.MD5 == "" || file.SHA256 == "" {
-			t.Errorf("File %s missing checksums", file.Path)
+		if file.MD5 == "" {
+			t.Errorf("File %s missing MD5 checksum", file.Path)
+		}
+		// SHA256 is optional for restic data files and parity files
+		isResticData := strings.HasPrefix(file.Path, "data/")
+		isParity := file.Type == "parity"
+		if !isResticData && !isParity && file.SHA256 == "" {
+			t.Errorf("File %s missing SHA256 checksum", file.Path)
 		}
 	}
 }
@@ -376,6 +395,7 @@ func TestFullBackupAndRecovery(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.25, // 25% redundancy for testing
 	}
 
@@ -428,37 +448,51 @@ func TestFullBackupAndRecovery(t *testing.T) {
 		}
 	}
 
-	// Also delete erasure_scheme.json to test metadata recovery (total 3 deletions)
-	schemePath := filepath.Join(config.ParityDir, ErasureSchemeName)
+	// Also delete erasure_scheme.json to test metadata recovery
+	schemePath := filepath.Join(config.MetadataDir, ErasureSchemeName)
 	if err := os.Remove(schemePath); err != nil {
 		t.Fatalf("Failed to delete erasure scheme: %v", err)
 	}
 
+	// Delete the metadata zip to force its recovery
+	metadataFiles, err := os.ReadDir(config.MetadataDir)
+	if err == nil {
+		for _, file := range metadataFiles {
+			if !file.IsDir() && file.Name() != InnerManifestName && file.Name() != ErasureSchemeName {
+				// This should be the metadata zip
+				metadataZipPath := filepath.Join(config.MetadataDir, file.Name())
+				if err := os.Remove(metadataZipPath); err != nil {
+					t.Fatalf("Failed to delete metadata zip: %v", err)
+				}
+				t.Logf("Deleted metadata zip: %s", file.Name())
+				break
+			}
+		}
+	}
+
+	// Check parity file sizes for debugging
+	parityShardDir := filepath.Join(config.ParityDir, "shards")
+	if files, err := os.ReadDir(parityShardDir); err == nil {
+		for _, f := range files {
+			if info, err := f.Info(); err == nil {
+				t.Logf("Parity file %s: %d bytes", f.Name(), info.Size())
+			}
+		}
+	}
+
 	// Step 3: Attempt recovery
 	recoveryConfig := &Config{
-		RepoPath:   repoDir,
-		ParityDir:  config.ParityDir,
-		RecoverAll: true,
+		RepoPath:    repoDir,
+		ParityDir:   config.ParityDir,
+		MetadataDir: config.MetadataDir,
+		RecoverAll:  true,
 	}
 
 	recoveryManager := NewManager(recoveryConfig)
 
-	// Load manifests
-	innerPath := filepath.Join(config.ParityDir, InnerManifestName)
-	innerData, err := os.ReadFile(innerPath)
-	if err != nil {
-		t.Fatalf("Failed to read inner manifest: %v", err)
-	}
-
-	if err := json.Unmarshal(innerData, &recoveryManager.innerManifest); err != nil {
-		t.Fatalf("Failed to parse inner manifest: %v", err)
-	}
-
-	recoveryManager.scheme = recoveryManager.innerManifest.ErasureScheme
-
-	// Perform recovery
-	if err := recoveryManager.recoverFromParity(); err != nil {
-		t.Fatalf("Failed to recover from parity: %v", err)
+	// Perform recovery using the main Recover method which detects format
+	if err := recoveryManager.Recover(); err != nil {
+		t.Fatalf("Failed to recover: %v", err)
 	}
 
 	// Step 4: Verify recovered files
@@ -483,18 +517,35 @@ func TestFullBackupAndRecovery(t *testing.T) {
 		}
 
 		filePath := filepath.Join(repoDir, fileEntry.Path)
-		md5sum, sha256sum, err := calculateChecksums(filePath)
-		if err != nil {
-			t.Errorf("Failed to calculate checksums for recovered file %s: %v", fileEntry.Path, err)
-			continue
-		}
 
-		if md5sum != fileEntry.MD5 {
-			t.Errorf("MD5 mismatch for recovered file %s", fileEntry.Path)
-		}
+		// Check if this is a restic data file
+		isResticData := strings.HasPrefix(fileEntry.Path, "data/")
 
-		if sha256sum != fileEntry.SHA256 {
-			t.Errorf("SHA256 mismatch for recovered file %s", fileEntry.Path)
+		if isResticData {
+			// For restic data files, only verify MD5
+			md5sum, err := calculateMD5Only(filePath)
+			if err != nil {
+				t.Errorf("Failed to calculate MD5 for recovered file %s: %v", fileEntry.Path, err)
+				continue
+			}
+			if md5sum != fileEntry.MD5 {
+				t.Errorf("MD5 mismatch for recovered file %s", fileEntry.Path)
+			}
+		} else {
+			// For other files, verify both checksums
+			md5sum, sha256sum, err := calculateChecksums(filePath)
+			if err != nil {
+				t.Errorf("Failed to calculate checksums for recovered file %s: %v", fileEntry.Path, err)
+				continue
+			}
+
+			if md5sum != fileEntry.MD5 {
+				t.Errorf("MD5 mismatch for recovered file %s", fileEntry.Path)
+			}
+
+			if sha256sum != fileEntry.SHA256 {
+				t.Errorf("SHA256 mismatch for recovered file %s", fileEntry.Path)
+			}
 		}
 	}
 }
@@ -507,6 +558,7 @@ func TestFastVerify(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.10,
 	}
 
@@ -558,6 +610,7 @@ func TestMinimalRecovery(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.30, // 30% redundancy
 	}
 
@@ -619,9 +672,10 @@ func TestMinimalRecovery(t *testing.T) {
 
 	// Attempt recovery
 	recoveryConfig := &Config{
-		RepoPath:   repoDir,
-		ParityDir:  config.ParityDir,
-		RecoverAll: true,
+		RepoPath:    repoDir,
+		ParityDir:   config.ParityDir,
+		MetadataDir: config.MetadataDir,
+		RecoverAll:  true,
 	}
 
 	recoveryManager := NewManager(recoveryConfig)
@@ -640,6 +694,7 @@ func TestRecoveryWithMissingInnerManifest(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.20,
 	}
 
@@ -667,9 +722,24 @@ func TestRecoveryWithMissingInnerManifest(t *testing.T) {
 	}
 
 	// Delete inner manifest
-	innerPath := filepath.Join(config.ParityDir, InnerManifestName)
+	innerPath := filepath.Join(config.MetadataDir, InnerManifestName)
 	if err := os.Remove(innerPath); err != nil {
 		t.Fatalf("Failed to delete inner manifest: %v", err)
+	}
+
+	// Delete metadata zip to force recovery of inner manifest
+	metadataFiles, err := os.ReadDir(config.MetadataDir)
+	if err == nil {
+		for _, file := range metadataFiles {
+			if !file.IsDir() && file.Name() != InnerManifestName && file.Name() != ErasureSchemeName {
+				// This should be the metadata zip
+				metadataZipPath := filepath.Join(config.MetadataDir, file.Name())
+				if err := os.Remove(metadataZipPath); err != nil {
+					t.Fatalf("Failed to delete metadata zip: %v", err)
+				}
+				break
+			}
+		}
 	}
 
 	// Also delete one more data file (total 2 deletions with inner manifest)
@@ -686,9 +756,10 @@ func TestRecoveryWithMissingInnerManifest(t *testing.T) {
 
 	// Recovery should work even without inner manifest
 	recoveryConfig := &Config{
-		RepoPath:   repoDir,
-		ParityDir:  config.ParityDir,
-		RecoverAll: true,
+		RepoPath:    repoDir,
+		ParityDir:   config.ParityDir,
+		MetadataDir: config.MetadataDir,
+		RecoverAll:  true,
 	}
 
 	recoveryManager := NewManager(recoveryConfig)
@@ -723,6 +794,7 @@ func TestLocalOnlyWorkflow(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.15,
 		// No RcloneRemote specified - should work locally only
 	}
@@ -758,7 +830,7 @@ func TestLocalOnlyWorkflow(t *testing.T) {
 	}
 
 	// Check for manifest files
-	innerPath := filepath.Join(config.ParityDir, InnerManifestName)
+	innerPath := filepath.Join(config.MetadataDir, InnerManifestName)
 	outerPath := filepath.Join(config.ParityDir, OuterManifestName)
 
 	if _, err := os.Stat(innerPath); os.IsNotExist(err) {
@@ -778,6 +850,7 @@ func TestMultipleFileDeletion(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.40, // 40% redundancy to handle multiple deletions
 	}
 
@@ -826,9 +899,10 @@ func TestMultipleFileDeletion(t *testing.T) {
 
 	// Recovery should still work
 	recoveryConfig := &Config{
-		RepoPath:   repoDir,
-		ParityDir:  config.ParityDir,
-		RecoverAll: true,
+		RepoPath:    repoDir,
+		ParityDir:   config.ParityDir,
+		MetadataDir: config.MetadataDir,
+		RecoverAll:  true,
 	}
 
 	recoveryManager := NewManager(recoveryConfig)
@@ -852,6 +926,7 @@ func TestInvalidRepoPath(t *testing.T) {
 	config := &Config{
 		RepoPath:    "/non/existent/path",
 		ParityDir:   filepath.Join("/non/existent/path", "parity"),
+		MetadataDir: filepath.Join("/non/existent/path", "metadata"),
 		MinOverhead: 0.10,
 	}
 
@@ -870,6 +945,7 @@ func TestCorruptedParityFile(t *testing.T) {
 	config := &Config{
 		RepoPath:    repoDir,
 		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
 		MinOverhead: 0.20,
 	}
 
@@ -996,6 +1072,7 @@ func BenchmarkFullBackup(b *testing.B) {
 		config := &Config{
 			RepoPath:    repoDir,
 			ParityDir:   filepath.Join(repoDir, "parity"),
+			MetadataDir: filepath.Join(repoDir, "metadata"),
 			MinOverhead: 0.10,
 		}
 
