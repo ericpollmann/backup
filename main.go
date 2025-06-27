@@ -1746,8 +1746,9 @@ func (m *Manager) check() error {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
-		// Get file list with checksums from rclone
-		cmd := exec.Command(getRclonePath(), "lsjson", m.config.RcloneRemote, "--hash", "--recursive")
+		// Get file list with checksums from rclone (specifically from .restic/parity/)
+		remotePath := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
 		if err != nil {
 			return fmt.Errorf("failed to list remote files: %w", err)
@@ -1777,15 +1778,8 @@ func (m *Manager) check() error {
 		checkFiles = append(checkFiles, manifest.ParityFiles...)
 
 		for _, file := range checkFiles {
+			// The remote files are listed from within .restic/parity/, so we use the local path directly
 			remotePath := file.Path
-			// Adjust path for files in .restic/parity/
-			if !strings.HasPrefix(remotePath, ".restic/") {
-				if strings.HasPrefix(remotePath, "shards/") {
-					remotePath = ".restic/parity/" + remotePath
-				} else {
-					remotePath = ".restic/parity/" + remotePath
-				}
-			}
 
 			if remoteMD5, exists := remoteMap[remotePath]; exists {
 				if remoteMD5 != file.MD5 {
