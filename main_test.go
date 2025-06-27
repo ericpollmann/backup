@@ -235,6 +235,97 @@ func TestCreateInnerManifest(t *testing.T) {
 	}
 }
 
+func TestCreateInnerManifestIncremental(t *testing.T) {
+	tempDir := t.TempDir()
+	repoDir := createTestRepo(t, tempDir)
+	config := &Config{
+		RepoPath:    repoDir,
+		ParityDir:   filepath.Join(repoDir, "parity"),
+		MetadataDir: filepath.Join(repoDir, "metadata"),
+		MinOverhead: 0.10,
+	}
+
+	manager := NewManager(config)
+
+	// Initialize state
+	if err := manager.loadState(); err != nil {
+		t.Logf("Warning: failed to load state: %v", err)
+	}
+
+	// Calculate scheme first
+	if err := manager.CalculateErasureSchemeIncremental(); err != nil {
+		t.Fatalf("Failed to calculate erasure scheme: %v", err)
+	}
+
+	// Create directories
+	if err := os.MkdirAll(config.ParityDir, 0755); err != nil {
+		t.Fatalf("Failed to create parity dir: %v", err)
+	}
+	if err := os.MkdirAll(config.MetadataDir, 0755); err != nil {
+		t.Fatalf("Failed to create metadata dir: %v", err)
+	}
+
+	// Create inner manifest using incremental version
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
+		t.Fatalf("Failed to create inner manifest incremental: %v", err)
+	}
+
+	// Verify manifest file exists
+	manifestPath := filepath.Join(config.MetadataDir, InnerManifestName)
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		t.Fatal("Inner manifest file not created")
+	}
+
+	// Load and verify manifest content
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("Failed to read inner manifest: %v", err)
+	}
+
+	var manifest InnerManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("Failed to unmarshal inner manifest: %v", err)
+	}
+
+	// Verify manifest contains erasure scheme
+	if manifest.ErasureScheme == nil {
+		t.Fatal("Inner manifest missing erasure scheme")
+	}
+
+	// Verify file count - only data files
+	expectedFiles := 4 // Only files from data/ directory
+	if manifest.FileCount != expectedFiles {
+		t.Errorf("FileCount: got %d, want %d", manifest.FileCount, expectedFiles)
+	}
+
+	// Verify all files are from data directory
+	for _, file := range manifest.Files {
+		if !strings.HasPrefix(file.Path, "data/") {
+			t.Errorf("Expected all files to be from data/ directory, got: %s", file.Path)
+		}
+	}
+
+	// Verify no metadata files are included
+	metadataDirs := []string{"config", "index", "keys", "locks", "snapshots"}
+	for _, file := range manifest.Files {
+		for _, metaDir := range metadataDirs {
+			if strings.HasPrefix(file.Path, metaDir+"/") {
+				t.Errorf("Found metadata file in manifest that should be in metadata.zip: %s", file.Path)
+			}
+		}
+	}
+
+	// Verify all files have checksums
+	for _, file := range manifest.Files {
+		if file.MD5 == "" {
+			t.Errorf("File %s missing MD5 checksum", file.Path)
+		}
+		if file.Size <= 0 {
+			t.Errorf("File %s has invalid size: %d", file.Path, file.Size)
+		}
+	}
+}
+
 func TestGenerateErasureCodes(t *testing.T) {
 	tempDir := t.TempDir()
 	repoDir := createTestRepo(t, tempDir)

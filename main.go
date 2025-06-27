@@ -1303,31 +1303,27 @@ func (m *Manager) CreateInnerManifestIncremental() error {
 		}
 	}
 
-	// First count total files for progress
+	// First count total files for progress (only in data directory)
 	totalFiles := 0
-	filepath.Walk(m.config.RepoPath, func(path string, info os.FileInfo, err error) error {
+	dataDir := filepath.Join(m.config.RepoPath, "data")
+	filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			totalFiles++
 		}
 		return nil
 	})
 
-	m.progress.StartTask("Scanning repository files", totalFiles)
+	m.progress.StartTask("Scanning data files", totalFiles)
 
-	// Scan repository and check for changes
+	// Scan only data directory for changes
 	var files []FileEntry
 	var totalSize int64
 	changedFiles := 0
 	processedCount := 0
 
-	err := filepath.Walk(m.config.RepoPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
-		}
-
-		// Skip the parity directory
-		if info.IsDir() && path == m.config.ParityDir {
-			return filepath.SkipDir
 		}
 
 		if !info.IsDir() {
@@ -1340,11 +1336,6 @@ func (m *Manager) CreateInnerManifestIncremental() error {
 
 			// Update progress
 			m.progress.UpdateProgress(processedCount, filepath.Base(relPath))
-
-			// Skip files in parity directory (in case ParityDir is inside RepoPath)
-			if strings.HasPrefix(relPath, "parity/") {
-				return nil
-			}
 
 			// Check if file has changed
 			needsUpdate := false
