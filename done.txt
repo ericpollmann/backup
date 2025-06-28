@@ -886,3 +886,21 @@ is the place being checked.
 now, you can also examine gdrive contents of 
   the folder `backup` specifically
 
+> change so the parity shard file names are the sha256 of the contents and use that in the outer manifest as the sha256 
+  (I think it would naturally?) make test, make install, commit; when rcloning it left the old files in place, is there 
+  an option to make exact match including deleting files?  if so use it, make test / install / commit
+
+> Calculate the sha256 sum while streaming the parity shards so you don't need to read each one twice, it's much more 
+  efficient to calculate while it's already in L2 cache.  Same thing for any other place where processing is already 
+  happening in RAM, can you pipeline-stream concurrent calculations instead of doing them sequentially?  You can have 
+  one sha256 sum state for each of the parity shards then the sum will be available instantly when the erasure code data
+   is done being streamed.
+
+> I want the data / metadata files to be usable as a restic repo directly and no processing or renames of
+  those is allowed.  putting manifest at footer of parity shards seems more efficient (append vs.
+  rewrite) - seems like it will change sha256 of the file so the sha256 of the parity shards couldn't be
+  calculated until after the manifest is appended. how do we know where it starts / ends in the manifest
+  file? need a delimiter I guess.  Maybe header vs footer is better after all to make extraction easier.
+  even without changing data / metadata shards I think the new scheme is robust to losing or corrupting
+  any 10% of files and not knowing which ones - try to prove me wrong. if you can't prove it wrong.
+  implement it.  if you can prove it wrong suggest an alternative
