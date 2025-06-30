@@ -763,6 +763,12 @@ func (m *Manager) GenerateErasureCodesChunked() error {
 
 	m.progress.StartTask("Preparing erasure coding", 0)
 
+	// Clean up old parity files before creating new ones
+	if err := m.cleanupOldParityFiles(); err != nil {
+		log.Printf("Warning: failed to cleanup old parity files: %v", err)
+		// Continue anyway - not fatal
+	}
+
 	// Create metadata zip first
 	log.Println("Creating metadata archive...")
 	metadataZipPath, metadataZipSHA256, err := m.createMetadataZip()
@@ -986,6 +992,41 @@ func (m *Manager) parityWriter(totalChunks int, chunkSize int64, results <-chan 
 
 	m.progress.CompleteTask(fmt.Sprintf("Created %d parity files", m.scheme.ParityShards))
 	done <- nil
+}
+
+// cleanupOldParityFiles removes old parity files from the shards directory
+func (m *Manager) cleanupOldParityFiles() error {
+	parityDir := filepath.Join(m.config.ParityDir, "shards")
+
+	// Check if directory exists
+	if _, err := os.Stat(parityDir); os.IsNotExist(err) {
+		return nil // Nothing to clean up
+	}
+
+	// Read all files in the parity directory
+	files, err := os.ReadDir(parityDir)
+	if err != nil {
+		return fmt.Errorf("failed to read parity directory: %w", err)
+	}
+
+	// Remove all .shard files (but keep temporary files that might be in use)
+	removedCount := 0
+	for _, file := range files {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".shard") {
+			filePath := filepath.Join(parityDir, file.Name())
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Warning: failed to remove old parity file %s: %v", file.Name(), err)
+			} else {
+				removedCount++
+			}
+		}
+	}
+
+	if removedCount > 0 {
+		log.Printf("Removed %d old parity files", removedCount)
+	}
+
+	return nil
 }
 
 // readChunk reads a chunk from a file
