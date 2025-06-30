@@ -2483,6 +2483,11 @@ func (m *Manager) recoverFromParityChunked() error {
 
 // extractMetadataZip extracts the metadata zip file to restore repository metadata
 func (m *Manager) extractMetadataZip(zipPath string) error {
+	// Ensure MetadataDir is set to prevent extracting to current directory
+	if m.config.MetadataDir == "" {
+		return fmt.Errorf("metadata directory not configured")
+	}
+
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open metadata zip: %w", err)

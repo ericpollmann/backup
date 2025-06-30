@@ -904,3 +904,8 @@ now, you can also examine gdrive contents of
   even without changing data / metadata shards I think the new scheme is robust to losing or corrupting
   any 10% of files and not knowing which ones - try to prove me wrong. if you can't prove it wrong.
   implement it.  if you can prove it wrong suggest an alternative
+
+> when I run make test I get stray files in my filesystem, find and fix 
+  them -- consider using a simulate filesystem or dependency injection or 
+  mocking or similar techniques to avoid this.
+

@@ -1100,9 +1100,10 @@ func TestCorruptedParityFile(t *testing.T) {
 
 	// Recovery should still work with other parity files
 	recoveryConfig := &Config{
-		RepoPath:   repoDir,
-		ParityDir:  config.ParityDir,
-		RecoverAll: true,
+		RepoPath:    repoDir,
+		ParityDir:   config.ParityDir,
+		MetadataDir: config.MetadataDir,
+		RecoverAll:  true,
 	}
 
 	recoveryManager := NewManager(recoveryConfig)
