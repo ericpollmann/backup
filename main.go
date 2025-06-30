@@ -3336,7 +3336,7 @@ Commands:
 Global Options:
   -repo <path>     Override $RESTIC_REPOSITORY
   -remote <remote> Rclone remote (default: "gdrive:backup")
-  -overhead <pct>  Erasure coding overhead (default: 10%%)
+  -overhead <pct>  Erasure coding overhead (default: 5%%)
 
 Examples:
   # Full backup with verification
@@ -3383,7 +3383,7 @@ func main() {
 
 	flag.StringVar(&config.RepoPath, "repo", "", "Override RESTIC_REPOSITORY path")
 	flag.StringVar(&config.RcloneRemote, "remote", "gdrive:backup", "Rclone remote destination")
-	flag.Float64Var(&config.MinOverhead, "overhead", 0.10, "Minimum overhead percentage")
+	flag.Float64Var(&config.MinOverhead, "overhead", 0.05, "Minimum overhead percentage")
 	flag.BoolVar(&config.KeepTemp, "keep-temp", false, "Keep temporary files")
 	flag.BoolVar(&config.Quiet, "quiet", false, "Use simple progress output (no terminal features)")
 	flag.BoolVar(&config.NoProgress, "no-progress", false, "Disable all progress output")
