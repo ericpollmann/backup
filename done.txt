@@ -909,3 +909,31 @@ now, you can also examine gdrive contents of
   them -- consider using a simulate filesystem or dependency injection or 
   mocking or similar techniques to avoid this.
 
+> During verification I got this: Verifying parity files...
+
+  === Verification Summary ===
+
+  Data files:
+    ✓ All 664 data files verified
+
+  Metadata files:
+    ✓ All 5 metadata files verified
+
+  Parity files:
+    ✓ All 197 parity files verified
+
+  Overall:
+    ✓ All 866 files verified successfully
+
+  Checking cloud files...
+  2025/06/30 10:01:33 failed to list remote files: exit status 3
+  The problem is that there was no progress indicated along the way so it just hung.  Use the 
+  same progress bar indicator during parity file generation here.  After that make test / 
+  install / commit.  Next fix the parity files accumulating, there shouldn't be 197 parity 
+files
+   for 664+5 data+metadata, old ones should be deleted after new are created successfully.  
+  please make test/install/commit after that.  I'm also thinking 5% is sufficient overhead now, 
+  10% seems excessive - make test / install / commit after that.  Finally, cloud verification 
+  should be super fast and just check md5sums via API to match the manifest, it may already do 
+  that, if so done else do it then make test / install/commit.
+

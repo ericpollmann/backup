@@ -1761,11 +1761,29 @@ func (m *Manager) check() error {
 
 	// Verify parity files
 	fmt.Println("\nVerifying parity files...")
+	m.progress.StartTask("Verifying parity files", len(manifest.ParityFiles))
+
+	// Store original verifyFile and create wrapper
+	progressCount := 0
+	progressMu := &sync.Mutex{}
+	originalVerifyFile := verifyFile
+	verifyFile = func(entry FileEntry, basePath string, stats *verifyStats) {
+		originalVerifyFile(entry, basePath, stats)
+		progressMu.Lock()
+		progressCount++
+		m.progress.UpdateProgress(progressCount, fmt.Sprintf("%d/%d", progressCount, len(manifest.ParityFiles)))
+		progressMu.Unlock()
+	}
+
 	for _, file := range manifest.ParityFiles {
 		wg.Add(1)
 		go verifyFile(file, m.config.ParityDir, &parityStats)
 	}
 	wg.Wait()
+	m.progress.CompleteTask("Verified parity files")
+
+	// Restore original verifyFile
+	verifyFile = originalVerifyFile
 
 	// Summary by category
 	fmt.Println("\n=== Verification Summary ===")
@@ -2006,12 +2024,15 @@ func (m *Manager) fsck() error {
 
 	// Verify parity files
 	fmt.Println("\nVerifying parity files...")
-	for _, file := range manifest.ParityFiles {
+	m.progress.StartTask("Verifying parity files", len(manifest.ParityFiles))
+	for i, file := range manifest.ParityFiles {
 		if err := verifyFile(file, m.config.ParityDir, &parityStats); err != nil {
 			fmt.Printf("  ✗ Parity file %s verification failed: %v\n", file.Path, err)
 			parityStats.errors++
 		}
+		m.progress.UpdateProgress(i+1, fmt.Sprintf("%d/%d", i+1, len(manifest.ParityFiles)))
 	}
+	m.progress.CompleteTask("Verified parity files")
 
 	// Summary by category
 	fmt.Println("\n=== Deep Verification Summary ===")
