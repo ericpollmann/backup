@@ -937,3 +937,7 @@ files
   should be super fast and just check md5sums via API to match the manifest, it may already do 
   that, if so done else do it then make test / install/commit.
 
+> I also don't want any files to accumulate in the cloud backup, please confirm that is done or 
+  if not implement it.
+
+
