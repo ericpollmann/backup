@@ -1888,11 +1888,17 @@ func (m *Manager) check() error {
 
 		// Get file list with checksums from rclone (specifically from .restic/parity/)
 		remotePath := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+		m.progress.StartTask("Fetching cloud file checksums", 0)
 		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
 		if err != nil {
+			// Check if it's an exit error with stderr
+			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+				return fmt.Errorf("failed to list remote files: %s", string(exitErr.Stderr))
+			}
 			return fmt.Errorf("failed to list remote files: %w", err)
 		}
+		m.progress.CompleteTask("Retrieved cloud checksums")
 
 		var remoteFiles []struct {
 			Path   string            `json:"Path"`
@@ -1917,7 +1923,9 @@ func (m *Manager) check() error {
 		checkFiles = append(checkFiles, manifest.MetadataFiles...)
 		checkFiles = append(checkFiles, manifest.ParityFiles...)
 
-		for _, file := range checkFiles {
+		m.progress.StartTask("Verifying cloud file checksums", len(checkFiles))
+		for i, file := range checkFiles {
+			m.progress.UpdateProgress(i+1, fmt.Sprintf("%d/%d", i+1, len(checkFiles)))
 			// The remote files are listed from within parity/, so we use the local path directly
 			remotePath := file.Path
 
@@ -1931,6 +1939,7 @@ func (m *Manager) check() error {
 				cloudErrors++
 			}
 		}
+		m.progress.CompleteTask("Cloud verification complete")
 
 		if cloudErrors == 0 {
 			fmt.Println("  ✓ All cloud files OK")
