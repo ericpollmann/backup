@@ -2022,7 +2022,15 @@ func (m *Manager) check() error {
 		if err != nil {
 			// Check if it's an exit error with stderr
 			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-				return fmt.Errorf("failed to list remote files: %s", string(exitErr.Stderr))
+				errMsg := string(exitErr.Stderr)
+				// If the directory doesn't exist, that's a specific error we can handle
+				if strings.Contains(errMsg, "directory not found") || strings.Contains(errMsg, "NotFound") {
+					m.progress.CompleteTask("No cloud backup found")
+					fmt.Println("  ⚠ No cloud backup found (directory does not exist)")
+					// This is not a fatal error - just means no backup exists yet
+					return nil
+				}
+				return fmt.Errorf("failed to list remote files: %s", errMsg)
 			}
 			return fmt.Errorf("failed to list remote files: %w", err)
 		}

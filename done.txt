@@ -945,3 +945,11 @@ files
   %1 works.  Make that step show progress.  If it's parallelizable, make it parallelized.  Make it respond to Ctrl-C and kill 
   signal (term, not just kill) use the same progress indicator UI as other parts of the app
 
+> When doing backup check, cloud verification fails due to lsjson not working: 
+  Checking cloud files...
+  Fetching cloud file checksums
+
+  Received interrupt signal, stopping verification...
+  2025/06/30 18:26:53 failed to list remote files: 2025/06/30 18:26:53 NOTICE: Failed to lsjson: error in ListJSON: directory not 
+  found
+
