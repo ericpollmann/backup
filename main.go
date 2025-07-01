@@ -1774,15 +1774,21 @@ func (m *Manager) check() error {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
+	interrupted := false
 	go func() {
-		<-sigChan
-		fmt.Println("\nReceived interrupt signal, stopping verification...")
-		cancel()
+		select {
+		case <-sigChan:
+			interrupted = true
+			fmt.Println("\nReceived interrupt signal, stopping verification...")
+			cancel()
+		case <-ctx.Done():
+			// Context cancelled, exit gracefully
+		}
 	}()
 
 	// Verify data files with progress and controlled parallelism
-	fmt.Println("\nVerifying data files...")
 	m.progress.StartTask("Verifying data files", len(manifest.DataFiles))
 
 	// Use a worker pool with limited concurrency
@@ -1856,7 +1862,6 @@ func (m *Manager) check() error {
 	}
 
 	// Verify metadata files
-	fmt.Println("\nVerifying metadata files...")
 	m.progress.StartTask("Verifying metadata files", 1+len(manifest.MetadataFiles))
 
 	// Reset progress counter for metadata files
@@ -1876,20 +1881,31 @@ func (m *Manager) check() error {
 	}
 	m.progress.CompleteTask(fmt.Sprintf("Verified %d metadata files", len(metadataFiles)))
 
-	// Download parity files if using remote
+	// Check if we need to download parity files from remote
 	if m.config.RcloneRemote != "" {
-		fmt.Println("\nDownloading parity files for verification...")
-		paritySrc := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
-		parityDst := filepath.Join(m.config.ParityDir, "shards")
+		// Check if any parity files are missing locally
+		needDownload := false
+		for _, file := range manifest.ParityFiles {
+			parityPath := filepath.Join(m.config.ParityDir, file.Path)
+			if _, err := os.Stat(parityPath); os.IsNotExist(err) {
+				needDownload = true
+				break
+			}
+		}
 
-		cmd := exec.Command(getRclonePath(), "copy", paritySrc, parityDst, "--update")
-		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: failed to download parity files: %v", err)
+		if needDownload {
+			fmt.Println("Syncing missing parity files from cloud...")
+			paritySrc := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
+			parityDst := filepath.Join(m.config.ParityDir, "shards")
+
+			cmd := exec.Command(getRclonePath(), "copy", paritySrc, parityDst, "--update")
+			if err := cmd.Run(); err != nil {
+				log.Printf("Warning: failed to sync parity files: %v", err)
+			}
 		}
 	}
 
 	// Verify parity files
-	fmt.Println("\nVerifying parity files...")
 	m.progress.StartTask("Verifying parity files", len(manifest.ParityFiles))
 
 	// Reset progress counter for parity files
@@ -1947,70 +1963,58 @@ func (m *Manager) check() error {
 		m.progress.CompleteTask("Verification cancelled")
 		return fmt.Errorf("verification cancelled by user")
 	case <-parityDoneChan:
-		m.progress.CompleteTask("Verified parity files")
+		m.progress.CompleteTask(fmt.Sprintf("Verified %d parity files", parityStats.total))
 	}
 
-	// Stop listening for signals after verification is complete
-	signal.Stop(sigChan)
-	close(sigChan)
-
-	// Summary by category
-	fmt.Println("\n=== Verification Summary ===")
-
-	// Data files
-	fmt.Printf("\nData files:\n")
-	if dataStats.errors == 0 && dataStats.missing == 0 {
-		fmt.Printf("  ✓ All %d data files verified\n", dataStats.total)
-	} else {
-		fmt.Printf("  Total: %d files\n", dataStats.total)
-		if dataStats.errors > 0 {
-			fmt.Printf("  ✗ Checksum errors: %d\n", dataStats.errors)
-		}
-		if dataStats.missing > 0 {
-			fmt.Printf("  ✗ Missing files: %d\n", dataStats.missing)
-		}
-	}
-
-	// Metadata files
-	fmt.Printf("\nMetadata files:\n")
-	if metadataStats.errors == 0 && metadataStats.missing == 0 {
-		fmt.Printf("  ✓ All %d metadata files verified\n", metadataStats.total)
-	} else {
-		fmt.Printf("  Total: %d files\n", metadataStats.total)
-		if metadataStats.errors > 0 {
-			fmt.Printf("  ✗ Checksum errors: %d\n", metadataStats.errors)
-		}
-		if metadataStats.missing > 0 {
-			fmt.Printf("  ✗ Missing files: %d\n", metadataStats.missing)
-		}
-	}
-
-	// Parity files
-	fmt.Printf("\nParity files:\n")
-	if parityStats.errors == 0 && parityStats.missing == 0 {
-		fmt.Printf("  ✓ All %d parity files verified\n", parityStats.total)
-	} else {
-		fmt.Printf("  Total: %d files\n", parityStats.total)
-		if parityStats.errors > 0 {
-			fmt.Printf("  ✗ Checksum errors: %d\n", parityStats.errors)
-		}
-		if parityStats.missing > 0 {
-			fmt.Printf("  ✗ Missing files: %d\n", parityStats.missing)
-		}
-	}
-
-	// Overall summary
+	// Calculate totals
 	totalErrors := dataStats.errors + dataStats.missing + metadataStats.errors + metadataStats.missing + parityStats.errors + parityStats.missing
-	totalFiles := dataStats.total + metadataStats.total + parityStats.total
-	fmt.Printf("\nOverall:\n")
-	if totalErrors == 0 {
-		fmt.Printf("  ✓ All %d files verified successfully\n", totalFiles)
-	} else {
+
+	// Only show detailed summary if there are errors
+	if totalErrors > 0 {
+		fmt.Println()
+
+		// Data files
+		if dataStats.errors > 0 || dataStats.missing > 0 {
+			fmt.Printf("\nData files:\n")
+			fmt.Printf("  Total: %d files\n", dataStats.total)
+			if dataStats.errors > 0 {
+				fmt.Printf("  ✗ Checksum errors: %d\n", dataStats.errors)
+			}
+			if dataStats.missing > 0 {
+				fmt.Printf("  ✗ Missing files: %d\n", dataStats.missing)
+			}
+		}
+
+		// Metadata files
+		if metadataStats.errors > 0 || metadataStats.missing > 0 {
+			fmt.Printf("\nMetadata files:\n")
+			fmt.Printf("  Total: %d files\n", metadataStats.total)
+			if metadataStats.errors > 0 {
+				fmt.Printf("  ✗ Checksum errors: %d\n", metadataStats.errors)
+			}
+			if metadataStats.missing > 0 {
+				fmt.Printf("  ✗ Missing files: %d\n", metadataStats.missing)
+			}
+		}
+
+		// Parity files
+		if parityStats.errors > 0 || parityStats.missing > 0 {
+			fmt.Printf("\nParity files:\n")
+			fmt.Printf("  Total: %d files\n", parityStats.total)
+			if parityStats.errors > 0 {
+				fmt.Printf("  ✗ Checksum errors: %d\n", parityStats.errors)
+			}
+			if parityStats.missing > 0 {
+				fmt.Printf("  ✗ Missing files: %d\n", parityStats.missing)
+			}
+		}
+
+		fmt.Printf("\nOverall:\n")
 		fmt.Printf("  ✗ Total errors: %d\n", totalErrors)
 	}
 
 	// Check cloud files
-	if m.config.RcloneRemote != "" {
+	if m.config.RcloneRemote != "" && !interrupted {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
@@ -2083,25 +2087,24 @@ func (m *Manager) check() error {
 				cloudErrors++
 			}
 		}
-		m.progress.CompleteTask("Cloud verification complete")
 
 		if cloudErrors == 0 {
-			fmt.Println("  ✓ All cloud files OK")
+			m.progress.CompleteTask("All cloud files verified")
 		} else {
-			fmt.Printf("  ✗ Found %d cloud errors\n", cloudErrors)
+			m.progress.CompleteTask(fmt.Sprintf("✗ Found %d cloud errors", cloudErrors))
 			totalErrors += cloudErrors
 		}
 	}
 
-	fmt.Println("\n=== Quick Check Complete ===")
-	if totalErrors > 0 {
+	if totalErrors == 0 {
+		fmt.Println("\n✓ All files verified successfully")
+	} else {
+		fmt.Printf("\n✗ Verification failed with %d errors\n", totalErrors)
 		return fmt.Errorf("verification failed with %d errors", totalErrors)
 	}
 
 	return nil
-}
-
-// fsck performs deep verification using both MD5 and SHA256
+} // fsck performs deep verification using both MD5 and SHA256
 func (m *Manager) fsck() error {
 	fmt.Println("Running deep integrity check with SHA256...")
 

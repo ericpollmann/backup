@@ -1104,3 +1104,65 @@ files
   === Quick Check Complete ===
   2025/06/30 18:36:37 verification failed with 40 errors
 
+> pollmann@green backup % b check
+  Running quick integrity check...
+
+  Verifying data files...
+  Verifying data files
+  ✓ Verified 666 data files (completed in 17s)
+
+  Verifying metadata files...
+  Verifying metadata files
+  ✓ Verified 6 metadata files (completed in 0s)
+
+  Downloading parity files for verification...
+
+  Verifying parity files...
+  Verifying parity files
+  ✓ Verified parity files (completed in 2s)
+
+  === Verification Summary ===
+
+  Data files:
+    ✓ All 666 data files verified
+
+  Metadata files:
+    ✓ All 6 metadata files verified
+
+  Parity files:
+    ✓ All 34 parity files verified
+
+  Overall:
+    ✓ All 706 files verified successfully
+
+  Checking cloud files...
+
+  Received interrupt signal, stopping verification...
+  Fetching cloud file checksums
+  ✓ Retrieved cloud checksums (completed in 3s)
+  Verifying cloud file checksums
+  ✓ Cloud verification complete (completed in 0s)
+    ✓ All cloud files OK
+
+  === Quick Check Complete ===
+    First problem is the message Received interrupt signal, stopping verification...
+  printed even though no interrupt signal was sent (no ctrl-c press or kill).  second issue is === Verification Summary ===
+   is fully redundant with the lines above it.  third issue is 
+  Verifying data files...
+  Verifying data files
+  ✓ Verified 666 data files (completed in 17s)
+  These 3 lines could be 1 line.  Especially the first 2 are redundant with each other -- could just drop both I feel and put 
+  verifying data files to the right of progress bar whilein flright  Fourth issue is Verifying metadata files...
+  Verifying metadata files
+  ✓ Verified 6 metadata files (completed in 0s)
+
+  Downloading parity files for verification...
+
+  Verifying parity files...
+  Verifying parity files
+  ✓ Verified parity files (completed in 2s)
+  Why does it say "Downloading parity files for verification" we shouldn't be downloading at this stage I believe?  At least not 
+  downloading the fiels, maybe listing them to get md5 sum at most, print out what you do.  In all these strive for consistency of 
+  output, terseness, and being clear / minimial with communicatoin but also incremental to show what's happening each step that 
+  might cause a delay
+
