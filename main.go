@@ -250,7 +250,7 @@ func (m *Manager) downloadManifests() error {
 
 	files := []string{OuterManifestName, InnerManifestName, ErasureSchemeName}
 	for _, file := range files {
-		src := fmt.Sprintf("%s/.restic/parity/%s", m.config.RcloneRemote, file)
+		src := fmt.Sprintf("%s/parity/%s", m.config.RcloneRemote, file)
 		dst := m.config.ParityDir
 
 		cmd := exec.Command(getRclonePath(), "copy", src, dst)
@@ -289,7 +289,7 @@ func (m *Manager) downloadForRecovery() error {
 	}
 
 	for _, file := range files {
-		src := fmt.Sprintf("%s/.restic/parity/%s", m.config.RcloneRemote, file)
+		src := fmt.Sprintf("%s/parity/%s", m.config.RcloneRemote, file)
 		dst := m.config.ParityDir
 
 		cmd := exec.Command(getRclonePath(), "copy", src, dst)
@@ -299,7 +299,7 @@ func (m *Manager) downloadForRecovery() error {
 	}
 
 	// Download parity shards
-	paritySrc := fmt.Sprintf("%s/.restic/parity/shards/", m.config.RcloneRemote)
+	paritySrc := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
 	parityDst := filepath.Join(m.config.ParityDir, "shards")
 
 	cmd := exec.Command(getRclonePath(), "copy", paritySrc, parityDst, "--progress")
@@ -1879,7 +1879,7 @@ func (m *Manager) check() error {
 	// Download parity files if using remote
 	if m.config.RcloneRemote != "" {
 		fmt.Println("\nDownloading parity files for verification...")
-		paritySrc := fmt.Sprintf("%s/.restic/parity/shards/", m.config.RcloneRemote)
+		paritySrc := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
 		parityDst := filepath.Join(m.config.ParityDir, "shards")
 
 		cmd := exec.Command(getRclonePath(), "copy", paritySrc, parityDst, "--update")
@@ -2014,8 +2014,8 @@ func (m *Manager) check() error {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
-		// Get file list with checksums from rclone (specifically from .restic/parity/)
-		remotePath := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+		// Get file list with checksums from rclone (from parity/ since we sync the .restic contents)
+		remotePath := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
 		m.progress.StartTask("Fetching cloud file checksums", 0)
 		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
@@ -2067,11 +2067,11 @@ func (m *Manager) check() error {
 
 			if remoteMD5, exists := remoteMap[remotePath]; exists {
 				if remoteMD5 != file.MD5 {
-					fmt.Printf("  ✗ Cloud MD5 mismatch: .restic/parity/%s\n", remotePath)
+					fmt.Printf("  ✗ Cloud MD5 mismatch: parity/%s\n", remotePath)
 					cloudErrors++
 				}
 			} else {
-				fmt.Printf("  ✗ Missing in cloud: .restic/parity/%s\n", remotePath)
+				fmt.Printf("  ✗ Missing in cloud: parity/%s\n", remotePath)
 				cloudErrors++
 			}
 		}
@@ -2196,7 +2196,7 @@ func (m *Manager) fsck() error {
 	// Download and verify parity files if using remote
 	if m.config.RcloneRemote != "" {
 		fmt.Println("\nDownloading parity files for full verification...")
-		paritySrc := fmt.Sprintf("%s/.restic/parity/shards/", m.config.RcloneRemote)
+		paritySrc := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
 		parityDst := filepath.Join(m.config.ParityDir, "shards")
 
 		cmd := exec.Command(getRclonePath(), "copy", paritySrc, parityDst, "--progress")
@@ -3014,7 +3014,7 @@ func (m *Manager) UploadToRemote() error {
 
 	for _, file := range files {
 		src := filepath.Join(m.config.ParityDir, file)
-		dst := fmt.Sprintf("%s/.restic/parity/", m.config.RcloneRemote)
+		dst := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
 
 		cmd := exec.Command(getRclonePath(), "copy", src, dst)
 		if err := cmd.Run(); err != nil {
@@ -3024,7 +3024,7 @@ func (m *Manager) UploadToRemote() error {
 
 	// Upload parity directory
 	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	parityDst := fmt.Sprintf("%s/.restic/parity/shards/", m.config.RcloneRemote)
+	parityDst := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
 
 	cmd := exec.Command(getRclonePath(), "copy", parityDir, parityDst, "--progress")
 	cmd.Stdout = os.Stdout

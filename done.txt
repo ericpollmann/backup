@@ -953,3 +953,29 @@ files
   2025/06/30 18:26:53 failed to list remote files: 2025/06/30 18:26:53 NOTICE: Failed to lsjson: error in ListJSON: directory not 
   found
 
+> I get that error (not found) but the backup is there: pollmann@green backup % rclone ls gdrive:backup
+        155 config
+        448 keys/05a6effbd44a108d2fa29c7dda32be9b3b9728a2c7f5bf19721c05c3f8255ec7
+    8985257 metadata/3f3a32f20dd9dab0cdeeff7b6a9643175cfd9997e3b768b37f41d7c3aa8943ed
+     131616 metadata/INNER_MANIFEST.json
+    8982021 metadata/88dce7e8b1687af7f147114957458543ae88d979ccd64636877007893aa3882e
+    8645739 metadata/51664654f8af31a18fe7ddf77eb98a1c158c27114e3fba7c0dcf0a924400e376
+    8643564 metadata/b5655c7f32ae05620ed4b87ecad6680802c1cdeb1fee47b4c6888b76bda76f27
+        200 metadata/erasure_scheme.json
+        443 snapshots/2458cb3141e7a441bc7e9206e061d05187674608029574996ebc52c0cd2b0777
+        454 snapshots/35d1dbbf06f0b0aea7b4749f5edaa99dae6d3363f31f156306a40e51b32c2306
+        439 snapshots/8aeb0d84a974776c20d8c12fe60fd35aa567bdabc920955586b02f5922678b6c
+        446 snapshots/ed49352f52c3e2c4336e17f9a7a8e6bf0f81f263dc1c287a5190d5c5f6b03c50
+        398 snapshots/68cddfb1896011a567e810ef5d847b46460584e3d205dd52cdb910a141de28f3
+      56138 parity/state.json
+     142965 parity/OUTER_MANIFEST.json
+       2182 index/c23fc4813845b22946bea9bc01a1ab6024240ede4bccdf93de4fe91414fc4010
+     334024 index/68da0d1dc2f9e8e27c2aa57bd71977d7f73f88c6413d23279f4643f21b90282a
+       1118 index/b7a0ac4ff2a095dae12e0d99a6bcdaca8ea8b9a7ef756b17d8db7ca3fba1787f
+      15102 index/c2b0df8a3fea58a3d740d5552932979ac72fc13db01d29c9033e01f8da7f16bc
+     971362 index/e59be7d44313df0ded52483e9c8176563a4eaf99eb77eff6bcdad95640f93bb0
+    2766719 index/eec2fa590288662adcb2c3e0084e0577b3514f2b97207776f97a25ad593b6c6f
+    2407895 index/6c64435d98e40da669a3aca89e0651b2f6d4781acad212ecae9a824202c58dda
+    2436304 index/c36f033921b36f189404f9f506f0168903318f6e5732c174e022b354e2a614d1
+   23134816 parity/shards/0031_de4e4e8a57eb08ef8794ec9a8fee6dbad876fc0e775e6f4dfc801ac6dc88d233.shard
+
