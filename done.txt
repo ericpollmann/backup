@@ -940,4 +940,8 @@ files
 > I also don't want any files to accumulate in the cloud backup, please confirm that is done or 
   if not implement it.
 
+> when running backup check, it verifies data files (not claer what that means from the text output) with no progress.  Also that 
+  step is not interruptible, even Ctrl-C doesn't stop it, only way is to Ctrl-Z -- even then kill %1 doesn't kill it, but kill -9 
+  %1 works.  Make that step show progress.  If it's parallelizable, make it parallelized.  Make it respond to Ctrl-C and kill 
+  signal (term, not just kill) use the same progress indicator UI as other parts of the app
 

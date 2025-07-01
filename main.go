@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/binary"
@@ -14,11 +15,13 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/reedsolomon"
@@ -1728,10 +1731,8 @@ func (m *Manager) check() error {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Verify function
-	verifyFile := func(entry FileEntry, basePath string, stats *verifyStats) {
-		defer wg.Done()
-
+	// Base verify function without WaitGroup management
+	verifyFileBase := func(entry FileEntry, basePath string, stats *verifyStats) {
 		mu.Lock()
 		stats.total++
 		mu.Unlock()
@@ -1767,26 +1768,113 @@ func (m *Manager) check() error {
 		}
 	}
 
-	// Verify data files
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\nReceived interrupt signal, stopping verification...")
+		cancel()
+	}()
+
+	// Verify data files with progress and controlled parallelism
 	fmt.Println("\nVerifying data files...")
-	for _, file := range manifest.DataFiles {
-		wg.Add(1)
-		go verifyFile(file, m.config.RepoPath, &dataStats)
+	m.progress.StartTask("Verifying data files", len(manifest.DataFiles))
+
+	// Use a worker pool with limited concurrency
+	numWorkers := runtime.NumCPU() * 2
+	if numWorkers > 16 {
+		numWorkers = 16 // Cap at 16 workers
 	}
-	wg.Wait()
+
+	type verifyWork struct {
+		file     FileEntry
+		basePath string
+		stats    *verifyStats
+	}
+
+	workChan := make(chan verifyWork, numWorkers)
+	doneChan := make(chan struct{})
+
+	// Progress tracking
+	progressCount := 0
+	progressMu := &sync.Mutex{}
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for work := range workChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					verifyFileBase(work.file, work.basePath, work.stats)
+					progressMu.Lock()
+					progressCount++
+					m.progress.UpdateProgress(progressCount, fmt.Sprintf("%d/%d", progressCount, len(manifest.DataFiles)))
+					progressMu.Unlock()
+				}
+			}
+		}()
+	}
+
+	// Feed work to the pool
+	go func() {
+		for _, file := range manifest.DataFiles {
+			select {
+			case <-ctx.Done():
+				close(workChan)
+				return
+			case workChan <- verifyWork{file: file, basePath: m.config.RepoPath, stats: &dataStats}:
+			}
+		}
+		close(workChan)
+	}()
+
+	// Wait for completion or cancellation
+	go func() {
+		wg.Wait()
+		close(doneChan)
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Cancelled, drain the work channel
+		for range workChan {
+		}
+		wg.Wait()
+		m.progress.CompleteTask("Verification cancelled")
+		return fmt.Errorf("verification cancelled by user")
+	case <-doneChan:
+		m.progress.CompleteTask(fmt.Sprintf("Verified %d data files", len(manifest.DataFiles)))
+	}
 
 	// Verify metadata files
 	fmt.Println("\nVerifying metadata files...")
-	// Inner manifest
-	wg.Add(1)
-	go verifyFile(manifest.InnerManifest, m.config.RepoPath, &metadataStats)
+	m.progress.StartTask("Verifying metadata files", 1+len(manifest.MetadataFiles))
 
-	// Other metadata files
-	for _, file := range manifest.MetadataFiles {
-		wg.Add(1)
-		go verifyFile(file, m.config.RepoPath, &metadataStats)
+	// Reset progress counter for metadata files
+	progressCount = 0
+	metadataFiles := []FileEntry{manifest.InnerManifest}
+	metadataFiles = append(metadataFiles, manifest.MetadataFiles...)
+
+	for i, file := range metadataFiles {
+		select {
+		case <-ctx.Done():
+			m.progress.CompleteTask("Verification cancelled")
+			return fmt.Errorf("verification cancelled by user")
+		default:
+			verifyFileBase(file, m.config.RepoPath, &metadataStats)
+			m.progress.UpdateProgress(i+1, fmt.Sprintf("%d/%d", i+1, len(metadataFiles)))
+		}
 	}
-	wg.Wait()
+	m.progress.CompleteTask(fmt.Sprintf("Verified %d metadata files", len(metadataFiles)))
 
 	// Download parity files if using remote
 	if m.config.RcloneRemote != "" {
@@ -1804,27 +1892,67 @@ func (m *Manager) check() error {
 	fmt.Println("\nVerifying parity files...")
 	m.progress.StartTask("Verifying parity files", len(manifest.ParityFiles))
 
-	// Store original verifyFile and create wrapper
-	progressCount := 0
-	progressMu := &sync.Mutex{}
-	originalVerifyFile := verifyFile
-	verifyFile = func(entry FileEntry, basePath string, stats *verifyStats) {
-		originalVerifyFile(entry, basePath, stats)
-		progressMu.Lock()
-		progressCount++
-		m.progress.UpdateProgress(progressCount, fmt.Sprintf("%d/%d", progressCount, len(manifest.ParityFiles)))
-		progressMu.Unlock()
-	}
+	// Reset progress counter for parity files
+	progressCount = 0
 
-	for _, file := range manifest.ParityFiles {
+	// Create limited goroutines for parity verification
+	parityWorkChan := make(chan FileEntry, numWorkers)
+	parityDoneChan := make(chan struct{})
+
+	// Start parity workers
+	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go verifyFile(file, m.config.ParityDir, &parityStats)
+		go func() {
+			defer wg.Done()
+			for file := range parityWorkChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					verifyFileBase(file, m.config.ParityDir, &parityStats)
+					progressMu.Lock()
+					progressCount++
+					m.progress.UpdateProgress(progressCount, fmt.Sprintf("%d/%d", progressCount, len(manifest.ParityFiles)))
+					progressMu.Unlock()
+				}
+			}
+		}()
 	}
-	wg.Wait()
-	m.progress.CompleteTask("Verified parity files")
 
-	// Restore original verifyFile
-	verifyFile = originalVerifyFile
+	// Feed parity files
+	go func() {
+		for _, file := range manifest.ParityFiles {
+			select {
+			case <-ctx.Done():
+				close(parityWorkChan)
+				return
+			case parityWorkChan <- file:
+			}
+		}
+		close(parityWorkChan)
+	}()
+
+	// Wait for parity verification
+	go func() {
+		wg.Wait()
+		close(parityDoneChan)
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Cancelled, drain the work channel
+		for range parityWorkChan {
+		}
+		wg.Wait()
+		m.progress.CompleteTask("Verification cancelled")
+		return fmt.Errorf("verification cancelled by user")
+	case <-parityDoneChan:
+		m.progress.CompleteTask("Verified parity files")
+	}
+
+	// Stop listening for signals after verification is complete
+	signal.Stop(sigChan)
+	close(sigChan)
 
 	// Summary by category
 	fmt.Println("\n=== Verification Summary ===")
