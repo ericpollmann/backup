@@ -979,3 +979,128 @@ files
     2436304 index/c36f033921b36f189404f9f506f0168903318f6e5732c174e022b354e2a614d1
    23134816 parity/shards/0031_de4e4e8a57eb08ef8794ec9a8fee6dbad876fc0e775e6f4dfc801ac6dc88d233.shard
 
+> Still not working, feel free to run `backup check` to see for yourself, here's the latest failure mode.  Also note that it says 
+  it's downloading parity files near the top but I don't think it really is downloading them?  pollmann@green backup % b check     
+                              
+  Running quick integrity check...
+
+  Verifying data files...
+  Verifying data files
+  ✓ Verified 666 data files (completed in 21s)
+
+  Verifying metadata files...
+  Verifying metadata files
+  ✓ Verified 6 metadata files (completed in 0s)
+
+  Downloading parity files for verification...
+
+  Verifying parity files...
+  Verifying parity files
+  ✓ Verified parity files (completed in 2s)
+
+  === Verification Summary ===
+
+  Data files:
+    ✓ All 666 data files verified
+
+  Metadata files:
+    ✓ All 6 metadata files verified
+
+  Parity files:
+    ✓ All 34 parity files verified
+
+  Overall:
+    ✓ All 706 files verified successfully
+
+  Checking cloud files...
+  Fetching cloud file checksums
+
+  Received interrupt signal, stopping verification...
+  ✓ Retrieved cloud checksums (completed in 2s)
+  Verifying cloud file checksums
+  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 2.5% (1/40) ETA: 0s 1/40                            ✗ Missing in cloud: 
+  parity/metadata/INNER_MANIFEST.json
+  [█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 5.0% (2/40) ETA: 0s 2/40                            ✗ Missing in cloud: 
+  parity/metadata/erasure_scheme.json
+  [██░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 7.5% (3/40) ETA: 0s 3/40                            ✗ Missing in cloud: 
+  parity/metadata/3f3a32f20dd9dab0cdeeff7b6a9643175cfd9997e3b768b37f41d7c3aa8943ed
+  [███░░░░░░░░░░░░░░░░░░░░░░░░░░░] 10.0% (4/40) ETA: 0s 4/40                            ✗ Missing in cloud: 
+  parity/metadata/51664654f8af31a18fe7ddf77eb98a1c158c27114e3fba7c0dcf0a924400e376
+  [███░░░░░░░░░░░░░░░░░░░░░░░░░░░] 12.5% (5/40) ETA: 0s 5/40                            ✗ Missing in cloud: 
+  parity/metadata/88dce7e8b1687af7f147114957458543ae88d979ccd64636877007893aa3882e
+  [████░░░░░░░░░░░░░░░░░░░░░░░░░░] 15.0% (6/40) ETA: 0s 6/40                            ✗ Missing in cloud: 
+  parity/metadata/b5655c7f32ae05620ed4b87ecad6680802c1cdeb1fee47b4c6888b76bda76f27
+  [█████░░░░░░░░░░░░░░░░░░░░░░░░░] 17.5% (7/40) ETA: 0s 7/40                            ✗ Missing in cloud: 
+  parity/shards/0000_314c2c75a3d9d34aa904e874b191b1d539a4dc846030de487627eed764cb776b.shard
+  [██████░░░░░░░░░░░░░░░░░░░░░░░░] 20.0% (8/40) ETA: 0s 8/40                            ✗ Missing in cloud: 
+  parity/shards/0001_22696430062641c317ec22e31ecc4cb41663871b7170fbf8f8ac401ed3809a22.shard
+  [██████░░░░░░░░░░░░░░░░░░░░░░░░] 22.5% (9/40) ETA: 0s 9/40                            ✗ Missing in cloud: 
+  parity/shards/0002_8261e5fd526d17a94dfe245c25c3bc82ce0d2bbc5f06da5b598197e5e4880974.shard
+  [███████░░░░░░░░░░░░░░░░░░░░░░░] 25.0% (10/40) ETA: 0s 10/40                           ✗ Missing in cloud: 
+  parity/shards/0003_11cfc36253b19bedb8a82d73d1c1acfeb333406b7bbf75530bb8792ce80acabf.shard
+  [████████░░░░░░░░░░░░░░░░░░░░░░] 27.5% (11/40) ETA: 0s 11/40                           ✗ Missing in cloud: 
+  parity/shards/0004_421caacec6d8b634c704f324eb776fd1fc4a0a254f1bd80b32f535127b3a6aaf.shard
+  [█████████░░░░░░░░░░░░░░░░░░░░░] 30.0% (12/40) ETA: 0s 12/40                           ✗ Missing in cloud: 
+  parity/shards/0005_95a414c19c226ad5ccf6804d4deb7433046904b7feff413266727de8fe29d6ba.shard
+  [█████████░░░░░░░░░░░░░░░░░░░░░] 32.5% (13/40) ETA: 0s 13/40                           ✗ Missing in cloud: 
+  parity/shards/0006_3bab5ed319008676db7fbb136be01be9a5d71e8184a22cb302badeb602fecdd8.shard
+  [██████████░░░░░░░░░░░░░░░░░░░░] 35.0% (14/40) ETA: 0s 14/40                           ✗ Missing in cloud: 
+  parity/shards/0007_468fe3bc3111b3b3d8e4e4426245d284d7152d46b9cd38396a13418697fec0ad.shard
+  [███████████░░░░░░░░░░░░░░░░░░░] 37.5% (15/40) ETA: 0s 15/40                           ✗ Missing in cloud: 
+  parity/shards/0008_c70703f47065f9f23db587dafe49bbc01e0ac284d38f28173a2b70e48a1b9fe6.shard
+  [████████████░░░░░░░░░░░░░░░░░░] 40.0% (16/40) ETA: 0s 16/40                           ✗ Missing in cloud: 
+  parity/shards/0009_70722f66c9121f1428550a2745835de42218ff2a56e1e39ca43e4aa73c8a8119.shard
+  [████████████░░░░░░░░░░░░░░░░░░] 42.5% (17/40) ETA: 0s 17/40                           ✗ Missing in cloud: 
+  parity/shards/0010_027a3d4f2163259c5a8ae4f3265f657957adc4fbe03ca7c4f46543124fd77347.shard
+  [█████████████░░░░░░░░░░░░░░░░░] 45.0% (18/40) ETA: 0s 18/40                           ✗ Missing in cloud: 
+  parity/shards/0011_91bb973f59bd12278d287400beb05f2b6466873652d3eea59dcf25d9a2abff07.shard
+  [██████████████░░░░░░░░░░░░░░░░] 47.5% (19/40) ETA: 0s 19/40                           ✗ Missing in cloud: 
+  parity/shards/0012_651ecfea10f4fd0e9a13ad5b973b9707172f599b24edb418cdde74ee79f072b8.shard
+  [███████████████░░░░░░░░░░░░░░░] 50.0% (20/40) ETA: 0s 20/40                           ✗ Missing in cloud: 
+  parity/shards/0013_c468c22b2b34b26fb029fe0d62f29755703b96734262cf2ca142e7d7c260694d.shard
+  [███████████████░░░░░░░░░░░░░░░] 52.5% (21/40) ETA: 0s 21/40                           ✗ Missing in cloud: 
+  parity/shards/0014_7f5caee87e4f6c3a6564ae99c538d6dae2e8a3385692c45517dd60eaf8b4ea93.shard
+  [████████████████░░░░░░░░░░░░░░] 55.0% (22/40) ETA: 0s 22/40                           ✗ Missing in cloud: 
+  parity/shards/0015_4b032b90ae7b7d71a493633ab8c10623a6c7854f2a727bee7bad07f276f613fa.shard
+  [█████████████████░░░░░░░░░░░░░] 57.5% (23/40) ETA: 0s 23/40                           ✗ Missing in cloud: 
+  parity/shards/0016_3179388f15ef33e241ab5a88199adb0455ae03b2acbce0d9dd72c747591af40e.shard
+  [██████████████████░░░░░░░░░░░░] 60.0% (24/40) ETA: 0s 24/40                           ✗ Missing in cloud: 
+  parity/shards/0017_064e8dd1ab919af92b8dda002f55c094bc82cbf1f27bf4c6df98a39c2e46725e.shard
+  [██████████████████░░░░░░░░░░░░] 62.5% (25/40) ETA: 0s 25/40                           ✗ Missing in cloud: 
+  parity/shards/0018_51b09e4dad71bd851452274cb7da5a89d61406404b255ed28fe8ac62d8367390.shard
+  [███████████████████░░░░░░░░░░░] 65.0% (26/40) ETA: 0s 26/40                           ✗ Missing in cloud: 
+  parity/shards/0019_74de2e02fd81d637b0c0226e8af45eb11e13a4f818eba8dd94a4142e6af2b137.shard
+  [████████████████████░░░░░░░░░░] 67.5% (27/40) ETA: 0s 27/40                           ✗ Missing in cloud: 
+  parity/shards/0020_8cb282c3e0b241405f6814d8be96df75ba866f7c2b80f23e1b4e6aedafb7da68.shard
+  [█████████████████████░░░░░░░░░] 70.0% (28/40) ETA: 0s 28/40                           ✗ Missing in cloud: 
+  parity/shards/0021_048a3811a68d4e3a4a672001bce5e90607287cac5691126fd4c1a14dc344cb11.shard
+  [█████████████████████░░░░░░░░░] 72.5% (29/40) ETA: 0s 29/40                           ✗ Missing in cloud: 
+  parity/shards/0022_ba30cda2b0c7f28afad3e6e13ddcb65631c6de6397f3dbdb948a8d29340713bb.shard
+  [██████████████████████░░░░░░░░] 75.0% (30/40) ETA: 0s 30/40                           ✗ Missing in cloud: 
+  parity/shards/0023_52fcfee9c37d88b2c6bd3575580df546a516a6b16dbc77383797041d80906539.shard
+  [███████████████████████░░░░░░░] 77.5% (31/40) ETA: 0s 31/40                           ✗ Missing in cloud: 
+  parity/shards/0024_6c4c79ce8a2b1d36aae7d44e2372efff41e792a3e80b6813228cebbf5da47683.shard
+  [████████████████████████░░░░░░] 80.0% (32/40) ETA: 0s 32/40                           ✗ Missing in cloud: 
+  parity/shards/0025_6894b20dc854697b4ba440615919fb80843f25fbf83e806c5841665c0e5212ec.shard
+  [████████████████████████░░░░░░] 82.5% (33/40) ETA: 0s 33/40                           ✗ Missing in cloud: 
+  parity/shards/0026_de82f36e484d2b35a39dd86b1d85c2d299e99c04a1966d4355b7693c515e90db.shard
+  [█████████████████████████░░░░░] 85.0% (34/40) ETA: 0s 34/40                           ✗ Missing in cloud: 
+  parity/shards/0027_51149f45906527349d428eed92f482f4da8b51251501859744280b9ac5ae1825.shard
+  [██████████████████████████░░░░] 87.5% (35/40) ETA: 0s 35/40                           ✗ Missing in cloud: 
+  parity/shards/0028_051033cacaa031ce429b1b335748761cdc28d0d3ceb1890958f9cab7435a6e2a.shard
+  [███████████████████████████░░░] 90.0% (36/40) ETA: 0s 36/40                           ✗ Missing in cloud: 
+  parity/shards/0029_f0904b1882b7372e7740a1357046df22aadbafcb316532f6e7e2695ca9aa80da.shard
+  [███████████████████████████░░░] 92.5% (37/40) ETA: 0s 37/40                           ✗ Missing in cloud: 
+  parity/shards/0030_7c7c0d1aa9ddd22b89be259798f8d649a742b7847c7d060b94424f194c398981.shard
+  [████████████████████████████░░] 95.0% (38/40) ETA: 0s 38/40                           ✗ Missing in cloud: 
+  parity/shards/0031_de4e4e8a57eb08ef8794ec9a8fee6dbad876fc0e775e6f4dfc801ac6dc88d233.shard
+  [█████████████████████████████░] 97.5% (39/40) ETA: 0s 39/40                           ✗ Missing in cloud: 
+  parity/shards/0032_3a919a15203d1fee7ee5a17fd5a0812a79498d51611c0ad4f2e16ba164cf0c42.shard
+  [██████████████████████████████] 100.0% (40/40) ETA: 0s 40/40                           ✗ Missing in cloud: 
+  parity/shards/0033_bfa700830f53fe03c4e4bf2f6fb1a4dbf722e6fa16a007a57ea34d0b827a2257.shard
+  ✓ Cloud verification complete (completed in 0s)
+    ✗ Found 40 cloud errors
+
+  === Quick Check Complete ===
+  2025/06/30 18:36:37 verification failed with 40 errors
+

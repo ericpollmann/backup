@@ -2014,8 +2014,8 @@ func (m *Manager) check() error {
 		fmt.Println("\nChecking cloud files...")
 		cloudErrors := 0
 
-		// Get file list with checksums from rclone (from parity/ since we sync the .restic contents)
-		remotePath := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
+		// Get file list with checksums from rclone (from the entire backup)
+		remotePath := m.config.RcloneRemote
 		m.progress.StartTask("Fetching cloud file checksums", 0)
 		cmd := exec.Command(getRclonePath(), "lsjson", remotePath, "--hash", "--recursive")
 		output, err := cmd.Output()
@@ -2049,7 +2049,8 @@ func (m *Manager) check() error {
 		// Build map of remote files
 		remoteMap := make(map[string]string)
 		for _, f := range remoteFiles {
-			if md5, ok := f.Hashes["MD5"]; ok {
+			// rclone returns lowercase hash keys
+			if md5, ok := f.Hashes["md5"]; ok {
 				remoteMap[f.Path] = md5
 			}
 		}
@@ -2062,16 +2063,23 @@ func (m *Manager) check() error {
 		m.progress.StartTask("Verifying cloud file checksums", len(checkFiles))
 		for i, file := range checkFiles {
 			m.progress.UpdateProgress(i+1, fmt.Sprintf("%d/%d", i+1, len(checkFiles)))
-			// The remote files are listed from within parity/, so we use the local path directly
+			// Adjust path based on file type
 			remotePath := file.Path
+			if file.Type == "parity" || strings.HasPrefix(file.Path, "shards/") {
+				// Parity files need parity/ prefix on cloud
+				remotePath = "parity/" + file.Path
+			} else if file.Type == "manifest" && file.Path == OuterManifestName {
+				// OUTER_MANIFEST.json is in parity/ on cloud
+				remotePath = "parity/" + file.Path
+			}
 
 			if remoteMD5, exists := remoteMap[remotePath]; exists {
 				if remoteMD5 != file.MD5 {
-					fmt.Printf("  ✗ Cloud MD5 mismatch: parity/%s\n", remotePath)
+					fmt.Printf("  ✗ Cloud MD5 mismatch: %s\n", remotePath)
 					cloudErrors++
 				}
 			} else {
-				fmt.Printf("  ✗ Missing in cloud: parity/%s\n", remotePath)
+				fmt.Printf("  ✗ Missing in cloud: %s\n", remotePath)
 				cloudErrors++
 			}
 		}
