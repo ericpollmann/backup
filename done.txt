@@ -1166,3 +1166,6 @@ files
   output, terseness, and being clear / minimial with communicatoin but also incremental to show what's happening each step that 
   might cause a delay
 
+> In rclone output it mentions seeing 2000 files in the list of ~700 that were synced, are we leaving stray files in the rclone backup or are these other unrelated files?
+
+
