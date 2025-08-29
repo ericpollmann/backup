@@ -1168,4 +1168,24 @@ files
 
 > In rclone output it mentions seeing 2000 files in the list of ~700 that were synced, are we leaving stray files in the rclone backup or are these other unrelated files?
 
+> Look at main.go -- there's a backup management system here that uses restic (see the DESIGN-SPEC.md) -- there's a Manager with a Run method but I don't
+  think it's ever being called -- there's also a RunSnapshot() that does a snapshot of a hardcoded dir even though there's a config for BackupSource.  I'm
+  changing the BackupSource from /Volumes/fishbowl to /Users/pollmann and I want it to actually be configurable (cmdline) and not hardcoded -- ok if the
+  cmdline has a default of $HOME.  Remove any unused functions in this script.
+
+> remove 'fallback to /Users/pollmann' -- this is not a generally useful fallback.  Is repopath in config?  If so should runShapshot take both repoPath and
+  config?  Also why would runSnapshot only run once if there are multiple BackupSources?
+
+> Are there any other unused functions?  Can you use any common go tooling to find them?  Deadcode I think.
+
+> Can you run it again
+
+> Great - you removed a *lot* of code just now.  Please systematically review each function that was removed.  For each function, find the new code that
+  replaces it.  If it wasn't replaced, see if there is another implementation of similar functionality in the program.  Enumerate each function that was
+  removed, its replacement function, and if there is now, please describe what functionality was removed from the codebase.
+
+> For the removed function that wasn't replaced, Manager.downloadManifests, what was the purpose of that code, and is that purpose still accomplished in the
+  new codebase.  If not, we should implement replacement functionality.
+
+> make isn't working
 

@@ -149,90 +149,10 @@ func NewManager(config *Config) *Manager {
 	}
 }
 
-// Run executes the main workflow
-func (m *Manager) Run() error {
-	// Create temporary working directory
-	if m.config.WorkDir == "" {
-		tempDir, err := os.MkdirTemp("/tmp", "restic-erasure-*")
-		if err != nil {
-			return fmt.Errorf("failed to create temp directory: %w", err)
-		}
-		m.config.WorkDir = tempDir
-
-		// Clean up temp directory when done (unless -keep-temp is set)
-		if !m.config.KeepTemp {
-			defer func() {
-				log.Printf("Cleaning up temporary directory: %s", tempDir)
-				os.RemoveAll(tempDir)
-			}()
-		} else {
-			log.Printf("Temporary files will be kept in: %s", tempDir)
-		}
-	}
-
-	log.Printf("Working directory: %s", m.config.WorkDir)
-
-	switch {
-	case m.config.FastVerify || m.config.FullVerify:
-		// For verification, download manifests from remote if needed
-		if err := m.downloadManifests(); err != nil {
-			return fmt.Errorf("failed to download manifests: %w", err)
-		}
-		if m.config.FastVerify {
-			return m.check()
-		}
-		return m.fsck()
-
-	case m.config.Recover != "" || m.config.RecoverAll:
-		// For recovery, download necessary files from remote
-		if err := m.downloadForRecovery(); err != nil {
-			return fmt.Errorf("failed to download recovery files: %w", err)
-		}
-		return m.Recover()
-
-	default:
-		// Full backup workflow
-		if err := m.RunResticBackup(); err != nil {
-			return fmt.Errorf("restic backup failed: %w", err)
-		}
-
-		// Calculate erasure scheme first
-		if err := m.CalculateErasureScheme(); err != nil {
-			return fmt.Errorf("erasure scheme calculation failed: %w", err)
-		}
-
-		// Create inner manifest (including erasure scheme)
-		if err := m.CreateInnerManifest(); err != nil {
-			return fmt.Errorf("inner manifest creation failed: %w", err)
-		}
-
-		// Generate erasure codes
-		if err := m.GenerateErasureCodes(); err != nil {
-			return fmt.Errorf("erasure code generation failed: %w", err)
-		}
-
-		// Create outer manifest
-		if err := m.CreateOuterManifest(); err != nil {
-			return fmt.Errorf("outer manifest creation failed: %w", err)
-		}
-
-		if m.config.RcloneRemote != "" {
-			if err := m.UploadToRemote(); err != nil {
-				return fmt.Errorf("remote upload failed: %w", err)
-			}
-		} else {
-			log.Println("No remote specified, erasure files saved locally only")
-		}
-
-		m.PrintSummary()
-		return nil
-	}
-}
-
-// downloadManifests downloads manifests from remote for verification
+// downloadManifests downloads manifest files from remote for verification
 func (m *Manager) downloadManifests() error {
 	if m.config.RcloneRemote == "" {
-		// If no remote, parity files should be local
+		// If no remote, manifests should be local
 		return nil
 	}
 
@@ -248,6 +168,7 @@ func (m *Manager) downloadManifests() error {
 		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
 
+	// Download manifest files only
 	files := []string{OuterManifestName, InnerManifestName, ErasureSchemeName}
 	for _, file := range files {
 		src := fmt.Sprintf("%s/parity/%s", m.config.RcloneRemote, file)
@@ -271,31 +192,9 @@ func (m *Manager) downloadForRecovery() error {
 
 	log.Println("Downloading recovery files from remote...")
 
-	// Ensure parity directory exists
-	if err := os.MkdirAll(m.config.ParityDir, 0755); err != nil {
-		return fmt.Errorf("failed to create parity directory: %w", err)
-	}
-
-	// Ensure metadata directory exists
-	if err := os.MkdirAll(m.config.MetadataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
-	}
-
-	// Download manifests and metadata
-	files := []string{
-		InnerManifestName,
-		OuterManifestName,
-		ErasureSchemeName,
-	}
-
-	for _, file := range files {
-		src := fmt.Sprintf("%s/parity/%s", m.config.RcloneRemote, file)
-		dst := m.config.ParityDir
-
-		cmd := exec.Command(getRclonePath(), "copy", src, dst)
-		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: failed to download %s: %v", file, err)
-		}
+	// Download manifests first
+	if err := m.downloadManifests(); err != nil {
+		return fmt.Errorf("failed to download manifests: %w", err)
 	}
 
 	// Download parity shards
@@ -310,32 +209,6 @@ func (m *Manager) downloadForRecovery() error {
 		log.Printf("Warning: failed to download parity files: %v", err)
 	}
 
-	return nil
-}
-
-// RunResticBackup executes restic backup if sources are specified
-func (m *Manager) RunResticBackup() error {
-	if len(m.config.BackupSources) == 0 {
-		log.Println("No backup sources specified, skipping restic backup")
-		return nil
-	}
-
-	log.Println("Running restic backup...")
-
-	// Build restic command
-	args := []string{"backup"}
-	args = append(args, m.config.BackupSources...)
-
-	// Add exclude patterns
-	for _, pattern := range m.config.ExcludePatterns {
-		args = append(args, "--exclude", pattern)
-	}
-
-	if err := runResticCommand(m.config.RepoPath, args...); err != nil {
-		return fmt.Errorf("restic backup failed: %w", err)
-	}
-
-	log.Println("Restic backup completed")
 	return nil
 }
 
@@ -535,202 +408,6 @@ func (m *Manager) createMetadataZip() (string, string, error) {
 	os.Remove(tempPath)
 
 	return finalPath, sha256sum, nil
-}
-
-// CreateInnerManifest scans repository and creates inner manifest with parallel processing
-func (m *Manager) CreateInnerManifest() error {
-	log.Println("Creating inner manifest...")
-
-	// Ensure metadata directory exists
-	if err := os.MkdirAll(m.config.MetadataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
-	}
-
-	// First, save the erasure scheme file
-	schemePath := filepath.Join(m.config.MetadataDir, ErasureSchemeName)
-	schemeData, err := json.MarshalIndent(m.scheme, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal erasure scheme: %w", err)
-	}
-
-	if err := os.WriteFile(schemePath, schemeData, 0644); err != nil {
-		return fmt.Errorf("failed to write erasure scheme: %w", err)
-	}
-
-	// Create inner manifest
-	m.innerManifest = &InnerManifest{
-		Version:       Version,
-		Created:       time.Now(),
-		RepoPath:      m.config.RepoPath,
-		Files:         make([]FileEntry, 0),
-		ErasureScheme: m.scheme,
-	}
-
-	// Collect only data files from the data directory
-	var filesToProcess []fileWorkUnit
-
-	dataDir := filepath.Join(m.config.RepoPath, "data")
-	err = filepath.Walk(dataDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			relPath, err := filepath.Rel(m.config.RepoPath, path)
-			if err != nil {
-				return err
-			}
-
-			filesToProcess = append(filesToProcess, fileWorkUnit{
-				path:    path,
-				info:    info,
-				relPath: relPath,
-			})
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("error scanning repository: %w", err)
-	}
-
-	// Process files in parallel
-	numWorkers := runtime.NumCPU()
-	if numWorkers > 8 {
-		numWorkers = 8 // Cap at 8 workers to avoid too many open files
-	}
-
-	workChan := make(chan fileWorkUnit, numWorkers*2)
-	resultChan := make(chan fileResultUnit, numWorkers*2)
-
-	// Start workers
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go m.manifestWorker(&wg, workChan, resultChan)
-	}
-
-	// Start result collector
-	collectorDone := make(chan bool)
-	go func() {
-		for result := range resultChan {
-			if result.err != nil {
-				log.Printf("Warning: couldn't process %s: %v", result.entry.Path, result.err)
-				continue
-			}
-			m.innerManifest.Files = append(m.innerManifest.Files, result.entry)
-			m.innerManifest.TotalSize += result.entry.Size
-		}
-		collectorDone <- true
-	}()
-
-	// Send work
-	m.progress.StartTask("Processing repository files", len(filesToProcess))
-	for i, work := range filesToProcess {
-		workChan <- work
-		if i%100 == 0 {
-			m.progress.UpdateProgress(i, fmt.Sprintf("Processing %s", filepath.Base(work.relPath)))
-		}
-	}
-	close(workChan)
-
-	// Wait for workers to finish
-	wg.Wait()
-	close(resultChan)
-	<-collectorDone
-
-	m.progress.CompleteTask(fmt.Sprintf("Processed %d files", len(filesToProcess)))
-
-	m.innerManifest.FileCount = len(m.innerManifest.Files)
-
-	// Sort files by path for consistent ordering, but keep erasure_scheme.json first
-	sort.Slice(m.innerManifest.Files, func(i, j int) bool {
-		// erasure_scheme.json always comes first
-		if m.innerManifest.Files[i].Path == ErasureSchemeName {
-			return true
-		}
-		if m.innerManifest.Files[j].Path == ErasureSchemeName {
-			return false
-		}
-		// Otherwise sort alphabetically
-		return m.innerManifest.Files[i].Path < m.innerManifest.Files[j].Path
-	})
-
-	// Save inner manifest
-	manifestPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
-	manifestData, err := json.MarshalIndent(m.innerManifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal inner manifest: %w", err)
-	}
-
-	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
-		return fmt.Errorf("failed to write inner manifest: %w", err)
-	}
-
-	log.Printf("Inner manifest created: %d data files, %.2f GB total",
-		m.innerManifest.FileCount,
-		float64(m.innerManifest.TotalSize)/(1024*1024*1024))
-
-	return nil
-}
-
-// manifestWorker processes files for manifest creation
-func (m *Manager) manifestWorker(wg *sync.WaitGroup, work <-chan fileWorkUnit, results chan<- fileResultUnit) {
-	defer wg.Done()
-
-	for unit := range work {
-		// Check if this is a restic data file (in data/ directory with hex name)
-		isResticData := strings.HasPrefix(unit.relPath, "data/") &&
-			len(filepath.Base(unit.relPath)) >= 10 // Restic uses long hex names
-
-		var md5sum string
-		var err error
-
-		if isResticData {
-			// For restic data files, only calculate MD5
-			md5sum, err = calculateMD5Only(unit.path)
-			if err != nil {
-				results <- fileResultUnit{
-					entry: FileEntry{Path: unit.relPath},
-					err:   fmt.Errorf("failed to calculate MD5: %w", err),
-				}
-				continue
-			}
-		} else {
-			// For other files (config, index, keys, etc), calculate both
-			var sha256sum string
-			md5sum, sha256sum, err = calculateChecksums(unit.path)
-			if err != nil {
-				results <- fileResultUnit{
-					entry: FileEntry{Path: unit.relPath},
-					err:   fmt.Errorf("failed to calculate checksums: %w", err),
-				}
-				continue
-			}
-
-			results <- fileResultUnit{
-				entry: FileEntry{
-					Path:   unit.relPath,
-					Size:   unit.info.Size(),
-					MD5:    md5sum,
-					SHA256: sha256sum,
-					Type:   "data",
-				},
-			}
-			continue
-		}
-
-		// For restic data files
-		results <- fileResultUnit{
-			entry: FileEntry{
-				Path: unit.relPath,
-				Size: unit.info.Size(),
-				MD5:  md5sum,
-				Type: "data",
-			},
-		}
-	}
 }
 
 // fileWorkUnit represents a file to process for manifest creation
@@ -1068,270 +745,6 @@ func (m *Manager) GenerateErasureCodes() error {
 	return m.GenerateErasureCodesChunked()
 }
 
-// GenerateErasureCodesOld is the old implementation for reference
-func (m *Manager) GenerateErasureCodesOld() error {
-	m.progress.StartTask("Generating erasure codes", m.scheme.DataShards)
-
-	// Create Reed-Solomon encoder with NEON optimization for M1
-	enc, err := reedsolomon.New(m.scheme.DataShards, m.scheme.ParityShards,
-		reedsolomon.WithAutoGoroutines(64*1024)) // Auto-optimize for 64KB chunks
-	if err != nil {
-		return fmt.Errorf("failed to create encoder: %w", err)
-	}
-
-	// Prepare data shards (need to allocate space for parity shards too)
-	dataShards := make([][]byte, m.scheme.DataShards+m.scheme.ParityShards)
-	shardIndex := 0
-
-	// First shard is the erasure scheme
-	schemePath := filepath.Join(m.config.MetadataDir, ErasureSchemeName)
-	schemeData, err := os.ReadFile(schemePath)
-	if err != nil {
-		return fmt.Errorf("failed to read erasure scheme: %w", err)
-	}
-	dataShards[shardIndex] = make([]byte, m.scheme.ShardSize)
-	copy(dataShards[shardIndex], schemeData)
-	shardIndex++
-
-	// Second shard is the inner manifest
-	manifestPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
-	manifestData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fmt.Errorf("failed to read inner manifest: %w", err)
-	}
-	dataShards[shardIndex] = make([]byte, m.scheme.ShardSize)
-	copy(dataShards[shardIndex], manifestData)
-	shardIndex++
-
-	// Remaining shards are repository files (skip erasure_scheme.json from files list)
-	filesProcessed := 2 // Already processed erasure scheme and manifest
-	for _, file := range m.innerManifest.Files {
-		if file.Path == ErasureSchemeName {
-			continue // Already added as first shard
-		}
-
-		m.progress.UpdateProgress(filesProcessed, fmt.Sprintf("Loading %s", filepath.Base(file.Path)))
-		filesProcessed++
-
-		// Determine the correct base path for the file
-		var filePath string
-		if file.Path == "state.json" {
-			// state.json is in the parity directory
-			filePath = filepath.Join(m.config.ParityDir, file.Path)
-		} else {
-			// Repository files
-			filePath = filepath.Join(m.config.RepoPath, file.Path)
-		}
-
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			m.progress.Log("Warning: couldn't read %s: %v", filePath, err)
-			data = []byte{} // Use empty data for missing files
-		}
-
-		if int64(len(data)) > m.scheme.ShardSize {
-			return fmt.Errorf("file %s is too large (%d bytes) for shard size %d", file.Path, len(data), m.scheme.ShardSize)
-		}
-
-		if shardIndex < m.scheme.DataShards {
-			dataShards[shardIndex] = make([]byte, m.scheme.ShardSize)
-			copy(dataShards[shardIndex], data)
-			shardIndex++
-		} else {
-			return fmt.Errorf("too many files (%d) for data shards (%d) - scheme needs recalculation", shardIndex+1, m.scheme.DataShards)
-		}
-	}
-
-	// Fill any remaining empty shards
-	for shardIndex < m.scheme.DataShards {
-		dataShards[shardIndex] = make([]byte, m.scheme.ShardSize)
-		shardIndex++
-	}
-
-	// Pre-allocate parity shards (Reed-Solomon requires them to be pre-allocated)
-	for i := 0; i < m.scheme.ParityShards; i++ {
-		dataShards[m.scheme.DataShards+i] = make([]byte, m.scheme.ShardSize)
-	}
-
-	// Generate parity shards
-	m.progress.CompleteTask(fmt.Sprintf("Loaded %d data files", filesProcessed))
-	m.progress.StartTask("Encoding parity shards", 1)
-
-	if err := enc.Encode(dataShards); err != nil {
-		return fmt.Errorf("failed to encode: %w", err)
-	}
-
-	m.progress.CompleteTask("Encoding complete")
-
-	// Save parity shards
-	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	if err := os.MkdirAll(parityDir, 0755); err != nil {
-		return fmt.Errorf("failed to create parity directory: %w", err)
-	}
-
-	m.progress.StartTask("Writing parity shards", m.scheme.ParityShards)
-
-	for i := 0; i < m.scheme.ParityShards; i++ {
-		parityData := dataShards[m.scheme.DataShards+i]
-
-		// Calculate SHA256 of parity data
-		h := sha256.New()
-		h.Write(parityData)
-		sha256sum := hex.EncodeToString(h.Sum(nil))
-
-		m.progress.UpdateProgress(i+1, sha256sum)
-
-		parityPath := filepath.Join(parityDir, sha256sum)
-		if err := os.WriteFile(parityPath, parityData, 0644); err != nil {
-			return fmt.Errorf("failed to write parity shard %d: %w", i, err)
-		}
-	}
-
-	m.progress.CompleteTask(fmt.Sprintf("Created %d parity shards", m.scheme.ParityShards))
-	return nil
-}
-
-// CreateOuterManifest creates the outer manifest including parity files
-func (m *Manager) CreateOuterManifest() error {
-	log.Println("Creating outer manifest...")
-
-	m.outerManifest = &OuterManifest{
-		Version:       Version,
-		Created:       time.Now(),
-		DataFiles:     make([]FileEntry, 0),
-		ParityFiles:   make([]FileEntry, 0),
-		MetadataFiles: make([]FileEntry, 0),
-	}
-
-	// Add all data files from inner manifest
-	m.outerManifest.DataFiles = m.innerManifest.Files
-
-	// Add metadata files (erasure scheme and metadata zip)
-
-	// Add erasure scheme
-	schemePath := filepath.Join(m.config.MetadataDir, ErasureSchemeName)
-	if info, err := os.Stat(schemePath); err == nil {
-		md5sum, sha256sum, err := calculateChecksums(schemePath)
-		if err == nil {
-			m.outerManifest.MetadataFiles = append(m.outerManifest.MetadataFiles, FileEntry{
-				Path:   "metadata/" + ErasureSchemeName,
-				Size:   info.Size(),
-				MD5:    md5sum,
-				SHA256: sha256sum,
-				Type:   "metadata",
-			})
-		}
-	}
-
-	// Add metadata zip - find it in metadata directory
-	files, err := os.ReadDir(m.config.MetadataDir)
-	if err == nil {
-		for _, file := range files {
-			name := file.Name()
-			// Skip manifest and erasure scheme - look for SHA256 named file
-			if name != InnerManifestName && name != ErasureSchemeName && len(name) == 64 {
-				info, err := file.Info()
-				if err == nil {
-					zipPath := filepath.Join(m.config.MetadataDir, name)
-					md5sum, err := calculateMD5Only(zipPath)
-					if err == nil {
-						m.outerManifest.MetadataFiles = append(m.outerManifest.MetadataFiles, FileEntry{
-							Path:   "metadata/" + name,
-							Size:   info.Size(),
-							MD5:    md5sum,
-							SHA256: name, // The filename IS the SHA256
-							Type:   "metadata",
-						})
-					}
-				}
-			}
-		}
-	}
-
-	// Add inner manifest entry
-	manifestPath := filepath.Join(m.config.MetadataDir, InnerManifestName)
-	md5sum, sha256sum, err := calculateChecksums(manifestPath)
-	if err != nil {
-		return fmt.Errorf("failed to calculate inner manifest checksums: %w", err)
-	}
-
-	manifestInfo, _ := os.Stat(manifestPath)
-	m.outerManifest.InnerManifest = FileEntry{
-		Path:   "metadata/" + InnerManifestName,
-		Size:   manifestInfo.Size(),
-		MD5:    md5sum,
-		SHA256: sha256sum,
-		Type:   "manifest",
-	}
-
-	// Add parity files
-	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	parityFiles, err := os.ReadDir(parityDir)
-	if err != nil {
-		return fmt.Errorf("failed to read parity directory: %w", err)
-	}
-
-	// Sort files by name to ensure consistent order
-	sort.Slice(parityFiles, func(i, j int) bool {
-		return parityFiles[i].Name() < parityFiles[j].Name()
-	})
-
-	for _, file := range parityFiles {
-		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
-			continue // Skip directories and temp files
-		}
-
-		filePath := filepath.Join(parityDir, file.Name())
-		info, err := file.Info()
-		if err != nil {
-			log.Printf("Warning: couldn't stat parity file %s: %v", file.Name(), err)
-			continue
-		}
-
-		md5sum, err := calculateMD5(filePath)
-		if err != nil {
-			log.Printf("Warning: couldn't calculate MD5 for parity file %s: %v", file.Name(), err)
-			continue
-		}
-
-		// For parity files, extract SHA256 from filename (format: 0000_SHA256.shard)
-		sha256sum := ""
-		if parts := strings.Split(file.Name(), "_"); len(parts) == 2 {
-			sha256sum = strings.TrimSuffix(parts[1], ".shard")
-		}
-
-		entry := FileEntry{
-			Path:   filepath.Join("shards", file.Name()),
-			Size:   info.Size(),
-			MD5:    md5sum,
-			SHA256: sha256sum,
-			Type:   "parity",
-		}
-
-		m.outerManifest.ParityFiles = append(m.outerManifest.ParityFiles, entry)
-		m.outerManifest.TotalSize += info.Size()
-	}
-
-	// Calculate totals
-	m.outerManifest.TotalSize += m.innerManifest.TotalSize + m.outerManifest.InnerManifest.Size
-	m.outerManifest.FileCount = len(m.outerManifest.DataFiles) + len(m.outerManifest.MetadataFiles) +
-		len(m.outerManifest.ParityFiles) + 1 // +1 for inner manifest
-
-	// Save outer manifest
-	outerPath := filepath.Join(m.config.ParityDir, OuterManifestName)
-	outerData, err := json.MarshalIndent(m.outerManifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal outer manifest: %w", err)
-	}
-
-	if err := os.WriteFile(outerPath, outerData, 0644); err != nil {
-		return fmt.Errorf("failed to write outer manifest: %w", err)
-	}
-
-	log.Println("Outer manifest created")
-	return nil
-}
-
 // Incremental versions of the methods
 
 // CalculateErasureSchemeIncremental updates erasure scheme for new files
@@ -1399,6 +812,18 @@ func (m *Manager) CalculateErasureSchemeIncremental() error {
 
 // CreateInnerManifestIncremental creates manifest for new/changed files
 func (m *Manager) CreateInnerManifestIncremental() error {
+	// Ensure state is loaded
+	if m.state == nil {
+		if err := m.loadState(); err != nil {
+			return fmt.Errorf("failed to load state: %w", err)
+		}
+	}
+
+	// Ensure metadata directory exists
+	if err := os.MkdirAll(m.config.MetadataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
 	m.progress.StartTask("Creating inner manifest (incremental)", 0)
 
 	// Load existing manifest if available
@@ -1547,6 +972,18 @@ func (m *Manager) CreateInnerManifestIncremental() error {
 
 	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
 		return fmt.Errorf("failed to write inner manifest: %w", err)
+	}
+
+	// Save erasure scheme file
+	if m.scheme != nil {
+		schemePath := filepath.Join(m.config.MetadataDir, ErasureSchemeName)
+		schemeData, err := json.MarshalIndent(m.scheme, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal erasure scheme: %w", err)
+		}
+		if err := os.WriteFile(schemePath, schemeData, 0644); err != nil {
+			return fmt.Errorf("failed to write erasure scheme: %w", err)
+		}
 	}
 
 	log.Printf("Inner manifest created with %d files", len(files))
@@ -1704,6 +1141,11 @@ func (m *Manager) CreateOuterManifestIncremental() error {
 // check performs quick verification using MD5 sums
 func (m *Manager) check() error {
 	fmt.Println("Running quick integrity check...")
+
+	// Download manifests from remote if needed
+	if err := m.downloadManifests(); err != nil {
+		return fmt.Errorf("failed to download manifests: %w", err)
+	}
 
 	// Load outer manifest
 	outerPath := filepath.Join(m.config.ParityDir, OuterManifestName)
@@ -2104,9 +1546,16 @@ func (m *Manager) check() error {
 	}
 
 	return nil
-} // fsck performs deep verification using both MD5 and SHA256
+}
+
+// fsck performs deep verification using both MD5 and SHA256
 func (m *Manager) fsck() error {
 	fmt.Println("Running deep integrity check with SHA256...")
+
+	// Download manifests from remote if needed
+	if err := m.downloadManifests(); err != nil {
+		return fmt.Errorf("failed to download manifests: %w", err)
+	}
 
 	// Load outer manifest
 	outerPath := filepath.Join(m.config.ParityDir, OuterManifestName)
@@ -3012,43 +2461,6 @@ func (m *Manager) recoverAllMissingFiles() error {
 	return m.recoverFromParity()
 }
 
-// UploadToRemote uploads backup to rclone remote
-func (m *Manager) UploadToRemote() error {
-	log.Printf("Uploading to remote: %s", m.config.RcloneRemote)
-
-	// Upload all files
-	files := []string{
-		InnerManifestName,
-		OuterManifestName,
-		ErasureSchemeName,
-	}
-
-	for _, file := range files {
-		src := filepath.Join(m.config.ParityDir, file)
-		dst := fmt.Sprintf("%s/parity/", m.config.RcloneRemote)
-
-		cmd := exec.Command(getRclonePath(), "copy", src, dst)
-		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: failed to upload %s: %v", file, err)
-		}
-	}
-
-	// Upload parity directory
-	parityDir := filepath.Join(m.config.ParityDir, "shards")
-	parityDst := fmt.Sprintf("%s/parity/shards/", m.config.RcloneRemote)
-
-	cmd := exec.Command(getRclonePath(), "copy", parityDir, parityDst, "--progress")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to upload parity files: %w", err)
-	}
-
-	log.Println("Remote upload completed")
-	return nil
-}
-
 // PrintSummary prints operation summary
 func (m *Manager) PrintSummary() {
 	fmt.Println("\n=== Erasure Coding Summary ===")
@@ -3492,6 +2904,7 @@ Commands:
 Global Options:
   -repo <path>     Override $RESTIC_REPOSITORY
   -remote <remote> Rclone remote (default: "gdrive:backup")
+  -source <path>   Directory to backup (default: $HOME)
   -overhead <pct>  Erasure coding overhead (default: 5%%)
 
 Examples:
@@ -3537,8 +2950,13 @@ func main() {
 		RcloneRemote: "gdrive:backup", // Default remote
 	}
 
+	// Set default backup source to $HOME
+	homeDir := os.Getenv("HOME")
+	backupSource := homeDir
+
 	flag.StringVar(&config.RepoPath, "repo", "", "Override RESTIC_REPOSITORY path")
 	flag.StringVar(&config.RcloneRemote, "remote", "gdrive:backup", "Rclone remote destination")
+	flag.StringVar(&backupSource, "source", backupSource, "Directory to backup (default: $HOME)")
 	flag.Float64Var(&config.MinOverhead, "overhead", 0.05, "Minimum overhead percentage")
 	flag.BoolVar(&config.KeepTemp, "keep-temp", false, "Keep temporary files")
 	flag.BoolVar(&config.Quiet, "quiet", false, "Use simple progress output (no terminal features)")
@@ -3548,6 +2966,9 @@ func main() {
 	flag.Usage = printHelp
 
 	flag.Parse()
+
+	// Set backup sources from command line flag
+	config.BackupSources = []string{backupSource}
 
 	// Get repository path from environment or flag
 	if config.RepoPath == "" {
@@ -3579,7 +3000,7 @@ func main() {
 	switch command {
 	case "", "all": // Default: full pipeline
 		// 1. Create snapshot
-		if err := runSnapshot(config.RepoPath); err != nil {
+		if err := runSnapshot(config); err != nil {
 			log.Fatal(err)
 		}
 		// 2. Generate parity (incremental)
@@ -3597,7 +3018,7 @@ func main() {
 		fmt.Println("\nBackup complete!")
 
 	case "snapshot":
-		if err := runSnapshot(config.RepoPath); err != nil {
+		if err := runSnapshot(config); err != nil {
 			log.Fatal(err)
 		}
 
@@ -3645,19 +3066,26 @@ func main() {
 
 // Helper functions for subcommands
 
-func runSnapshot(repoPath string) error {
+func runSnapshot(config *Config) error {
 	fmt.Println("Creating restic snapshot...")
 
-	// Default to backing up /Volumes/fishbowl/pollmann with exclusions
-	backupPath := "/Volumes/fishbowl/pollmann"
-	excludeFile := filepath.Join(backupPath, ".resticignore")
-
-	args := []string{"backup", backupPath}
-	if _, err := os.Stat(excludeFile); err == nil {
-		args = append(args, "--exclude-file", excludeFile)
+	if len(config.BackupSources) == 0 {
+		return fmt.Errorf("no backup sources specified")
 	}
 
-	if err := runResticCommand(repoPath, args...); err != nil {
+	// Backup all sources in one restic command
+	args := []string{"backup"}
+	args = append(args, config.BackupSources...)
+
+	// Add exclude files from each source directory
+	for _, source := range config.BackupSources {
+		excludeFile := filepath.Join(source, ".resticignore")
+		if _, err := os.Stat(excludeFile); err == nil {
+			args = append(args, "--exclude-file", excludeFile)
+		}
+	}
+
+	if err := runResticCommand(config.RepoPath, args...); err != nil {
 		return fmt.Errorf("restic snapshot failed: %w", err)
 	}
 

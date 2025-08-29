@@ -153,7 +153,7 @@ func TestCalculateErasureScheme(t *testing.T) {
 	}
 }
 
-func TestCreateInnerManifest(t *testing.T) {
+func TestCreateInnerManifestIncremental(t *testing.T) {
 	tempDir := t.TempDir()
 	repoDir := createTestRepo(t, tempDir)
 	config := &Config{
@@ -179,7 +179,7 @@ func TestCreateInnerManifest(t *testing.T) {
 	}
 
 	// Create inner manifest
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestCreateInnerManifest(t *testing.T) {
 	}
 }
 
-func TestCreateInnerManifestIncremental(t *testing.T) {
+func TestCreateInnerManifestWithState(t *testing.T) {
 	tempDir := t.TempDir()
 	repoDir := createTestRepo(t, tempDir)
 	config := &Config{
@@ -347,7 +347,7 @@ func TestGenerateErasureCodes(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestGenerateErasureCodes(t *testing.T) {
 	}
 }
 
-func TestCreateOuterManifest(t *testing.T) {
+func TestCreateOuterManifestIncremental(t *testing.T) {
 	tempDir := t.TempDir()
 	repoDir := createTestRepo(t, tempDir)
 
@@ -416,7 +416,7 @@ func TestCreateOuterManifest(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -425,7 +425,7 @@ func TestCreateOuterManifest(t *testing.T) {
 	}
 
 	// Create outer manifest
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -507,7 +507,7 @@ func TestFullBackupAndRecovery(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -515,7 +515,7 @@ func TestFullBackupAndRecovery(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -670,7 +670,7 @@ func TestFastVerify(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -678,7 +678,7 @@ func TestFastVerify(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -722,7 +722,7 @@ func TestMinimalRecovery(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -730,7 +730,7 @@ func TestMinimalRecovery(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -815,7 +815,7 @@ func TestRecoveryWithMissingInnerManifest(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -823,7 +823,7 @@ func TestRecoveryWithMissingInnerManifest(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -923,7 +923,7 @@ func TestLocalOnlyWorkflow(t *testing.T) {
 	}
 
 	// Then create manifests and erasure codes
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -931,7 +931,7 @@ func TestLocalOnlyWorkflow(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -971,7 +971,7 @@ func TestMultipleFileDeletion(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -979,7 +979,7 @@ func TestMultipleFileDeletion(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -1066,7 +1066,7 @@ func TestCorruptedParityFile(t *testing.T) {
 		t.Fatalf("Failed to calculate erasure scheme: %v", err)
 	}
 
-	if err := manager.CreateInnerManifest(); err != nil {
+	if err := manager.CreateInnerManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create inner manifest: %v", err)
 	}
 
@@ -1074,7 +1074,7 @@ func TestCorruptedParityFile(t *testing.T) {
 		t.Fatalf("Failed to generate erasure codes: %v", err)
 	}
 
-	if err := manager.CreateOuterManifest(); err != nil {
+	if err := manager.CreateOuterManifestIncremental(); err != nil {
 		t.Fatalf("Failed to create outer manifest: %v", err)
 	}
 
@@ -1200,7 +1200,7 @@ func BenchmarkFullBackup(b *testing.B) {
 			b.Fatalf("Failed to calculate erasure scheme: %v", err)
 		}
 
-		if err := manager.CreateInnerManifest(); err != nil {
+		if err := manager.CreateInnerManifestIncremental(); err != nil {
 			b.Fatalf("Failed to create inner manifest: %v", err)
 		}
 
@@ -1208,7 +1208,7 @@ func BenchmarkFullBackup(b *testing.B) {
 			b.Fatalf("Failed to generate erasure codes: %v", err)
 		}
 
-		if err := manager.CreateOuterManifest(); err != nil {
+		if err := manager.CreateOuterManifestIncremental(); err != nil {
 			b.Fatalf("Failed to create outer manifest: %v", err)
 		}
 	}
