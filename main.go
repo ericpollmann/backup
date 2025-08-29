@@ -3081,9 +3081,14 @@ func runSnapshot(config *Config) error {
 	for _, source := range config.BackupSources {
 		excludeFile := filepath.Join(source, ".resticignore")
 		if _, err := os.Stat(excludeFile); err == nil {
+			fmt.Printf("DEBUG: Found exclude file: %s\n", excludeFile)
 			args = append(args, "--exclude-file", excludeFile)
+		} else {
+			fmt.Printf("DEBUG: Exclude file not found: %s (%v)\n", excludeFile, err)
 		}
 	}
+	
+	fmt.Printf("DEBUG: Final restic command: restic %s\n", strings.Join(args, " "))
 
 	if err := runResticCommand(config.RepoPath, args...); err != nil {
 		return fmt.Errorf("restic snapshot failed: %w", err)

@@ -1189,3 +1189,38 @@ files
 
 > make isn't working
 
+> When I run `backup snapshot` it's storing files from $HOME/.Trash -- I added /.Trash to
+  ~/.resticignore -- why isn't that preventing it from storing those files? Review the code that
+  generates the restic backup commandline -- ensure it's adding the .resticignore file as required.
+  Review the restic documentation, `restic help` or search online if you can't find out why.
+
+> You can run `pwr RESTIC_PASSWORD` (it's a bash alias) to get the password for the restic repo in the
+  context of a bash script --
+
+> Can you check the output for .Trash folders
+
+> It's still not working: pollmann@green ~ % RESTIC_PASSWORD=$(pwr RESTIC_PASSWORD) backup snapshot
+  --dry-run
+  Creating restic snapshot...
+  repository 97b90bbb opened (version 2, compression level auto)
+  no parent snapshot found, will read all files
+  [0:00] 100.00%  19 / 19 index files loaded
+  [0:03] 3874 files 1.205 GiB, total 41814 files 6.747 GiB, 0 errors
+  /Users/pollmann/.Trash/p15/dab/3e421382889c3063fe293f2488e-se3bdddb3dc1d70ba138.f
+  /Users/pollmann/.Trash/p17/67b/26c4672ba6131405fcf7341e2f6-se3bdddb3dc1d70ba138.f
+
+> don't think it's the code, restic isn't ignoring those files as expected  pollmann@green ~ %
+  RESTIC_PASSWORD=$(pwr RESTIC_PASSWORD) restic backup $HOME --exclude-file .resticignore
+  repository 97b90bbb opened (version 2, compression level auto)
+  no parent snapshot found, will read all files
+  [0:00] 100.00%  19 / 19 index files loaded
+  [0:03] 3867 files 1.058 GiB, total 37353 files 6.066 GiB, 0 errors
+  /Users/pollmann/.Trash/p10/be4/394c2bc818cd5f051142a6c10eb-se3bdddb3dc1d70ba138.f
+  /Users/pollmann/.Trash/p12/f24/e58a8e95dddd2ef30a2ef4726de-se3bdddb3dc1d70ba138.f
+
+> make a list of all large cache / volatile and unimportant files under /User/pollmann, one example is /Users/pollmann/Library/Application Support/Google/Chrome/Default/Service
+  Worker/CacheStorage -- I would like to keep /Users/pollmann/Library/Application Support/Google/Chrome/Default in general (google chrome profile) but don't care about caches.  Make a list
+   of all the largest files by recursively listing all files and grouping by size.  You're probably going to need a script to do this effectively.  Write the script in /tmp and run
+  iteratively until you have a ranked list of largest directories, and each one marked as include / exclude.  I want to review this.  We'll add it to .resticignore / .kopiaignore /
+  .gitignore, with slight varyiations on which to keep for each one (backups should store more than git, syntax varies for .resticignore with leading . before / for top level folders,
+  etc.)
