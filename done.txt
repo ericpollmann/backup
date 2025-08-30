@@ -1222,5 +1222,7 @@ files
   Worker/CacheStorage -- I would like to keep /Users/pollmann/Library/Application Support/Google/Chrome/Default in general (google chrome profile) but don't care about caches.  Make a list
    of all the largest files by recursively listing all files and grouping by size.  You're probably going to need a script to do this effectively.  Write the script in /tmp and run
   iteratively until you have a ranked list of largest directories, and each one marked as include / exclude.  I want to review this.  We'll add it to .resticignore / .kopiaignore /
-  .gitignore, with slight varyiations on which to keep for each one (backups should store more than git, syntax varies for .resticignore with leading . before / for top level folders,
-  etc.)
+  .gitignore, with slight varyiations on which to keep for each one (backups should store more than git, syntax varies for .resticignore with leading . before / for top level folders,  etc.)
+
+> I'm thinking of switching from restic to kopia, for this `main.go` simple
+   backup script.  can you talk me through what we'd need to do / pros /  cons of doing that switch?
